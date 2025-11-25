@@ -357,8 +357,8 @@ func runLogout(cmd *cobra.Command, args []string) {
 	os.RemoveAll(devicesDir)
 
 	// Remove WireGuard config
-	wgConfig := "/etc/wireguard/roamie.conf"
-	os.Remove(wgConfig)
+	wgConfigPath := wireguard.GetWireGuardConfigPath("roamie")
+	os.Remove(wgConfigPath)
 
 	fmt.Println("✓ Logged out successfully")
 }
@@ -378,86 +378,28 @@ func runSetupDaemon(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	// Auto-create systemd service
-	serviceContent := fmt.Sprintf(`[Unit]
-Description=Roamie VPN Client Auth Refresh Daemon
-After=network.target
-
-[Service]
-Type=simple
-User=%s
-Environment=HOME=%s
-ExecStart=%s auth daemon
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target`, username, homeDir, exePath)
-
-	servicePath := "/etc/systemd/system/roamie.service"
-
-	if !setupDaemonYes {
-		fmt.Println("Creating systemd service...")
-		fmt.Printf("\nService file: %s\n", servicePath)
-		fmt.Println("\nContent:")
-		fmt.Println("---")
-		fmt.Println(serviceContent)
-		fmt.Println("---")
-
-		fmt.Print("\nCreate this service? [y/N]: ")
-		var response string
-		fmt.Scanln(&response)
-
-		if response != "y" && response != "Y" {
-			fmt.Println("Cancelled")
-			return
-		}
+	// Setup platform-specific daemon service
+	cfg := daemon.ServiceConfig{
+		ExePath:  exePath,
+		Username: username,
+		HomeDir:  homeDir,
 	}
 
-	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
-		fmt.Printf("Failed to create service: %v\n", err)
+	if err := daemon.SetupService(cfg, setupDaemonYes); err != nil {
+		fmt.Printf("Failed to setup daemon: %v\n", err)
 		os.Exit(1)
-	}
-
-	fmt.Println("✓ Service file created")
-
-	// Reload systemd
-	exec.Command("systemctl", "daemon-reload").Run()
-	fmt.Println("✓ Systemd reloaded")
-
-	// Enable service
-	if err := exec.Command("systemctl", "enable", "roamie").Run(); err != nil {
-		fmt.Printf("Warning: Failed to enable service: %v\n", err)
-	} else {
-		fmt.Println("✓ Service enabled")
-	}
-
-	// Restart service (use restart instead of start to ensure new binary is used)
-	if err := exec.Command("systemctl", "restart", "roamie").Run(); err != nil {
-		fmt.Printf("Warning: Failed to restart service: %v\n", err)
-	} else {
-		fmt.Println("✓ Service started")
-	}
-
-	if !setupDaemonYes {
-		fmt.Println("\nDaemon setup complete!")
-		fmt.Println("Check status: systemctl status roamie")
-		fmt.Println("View logs: journalctl -u roamie -f")
 	}
 }
 
 func runUninstallDaemon(cmd *cobra.Command, args []string) {
-	servicePath := "/etc/systemd/system/roamie.service"
-
-	// Check if service exists
-	if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+	// Check if service is installed
+	if !daemon.IsServiceInstalled() {
 		fmt.Println("Service not installed")
 		return
 	}
 
-	fmt.Println("Uninstalling systemd service...")
-	fmt.Printf("\nService file: %s\n", servicePath)
-	fmt.Print("\nUninstall this service? [y/N]: ")
+	fmt.Println("Uninstalling daemon service...")
+	fmt.Print("\nUninstall the service? [y/N]: ")
 
 	var response string
 	fmt.Scanln(&response)
@@ -467,32 +409,10 @@ func runUninstallDaemon(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	// Stop service
-	if err := exec.Command("systemctl", "stop", "roamie").Run(); err != nil {
-		fmt.Printf("Warning: Failed to stop service: %v\n", err)
-	} else {
-		fmt.Println("✓ Service stopped")
-	}
-
-	// Disable service
-	if err := exec.Command("systemctl", "disable", "roamie").Run(); err != nil {
-		fmt.Printf("Warning: Failed to disable service: %v\n", err)
-	} else {
-		fmt.Println("✓ Service disabled")
-	}
-
-	// Remove service file
-	if err := os.Remove(servicePath); err != nil {
-		fmt.Printf("Failed to remove service file: %v\n", err)
+	if err := daemon.UninstallService(); err != nil {
+		fmt.Printf("Failed to uninstall daemon: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("✓ Service file removed")
-
-	// Reload systemd
-	exec.Command("systemctl", "daemon-reload").Run()
-	fmt.Println("✓ Systemd reloaded")
-
-	fmt.Println("\nDaemon uninstalled successfully!")
 }
 
 func runSSHSync(cmd *cobra.Command, args []string) {
@@ -664,6 +584,14 @@ func runConnect(cmd *cobra.Command, args []string) {
 	if os.Geteuid() != 0 {
 		fmt.Println("Error: This command requires root privileges")
 		fmt.Println("Please run: sudo roamie connect")
+		os.Exit(1)
+	}
+
+	// Pre-flight check: Ensure WireGuard is installed
+	if !wireguard.CheckInstalled() {
+		fmt.Println("Error: WireGuard is not installed")
+		fmt.Println()
+		fmt.Println(wireguard.GetInstallInstructions())
 		os.Exit(1)
 	}
 

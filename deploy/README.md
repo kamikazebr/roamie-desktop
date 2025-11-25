@@ -124,9 +124,54 @@ When ready to migrate from internal PostgreSQL to Supabase:
 2. Verify domain DNS points to server
 3. Wait for Let's Encrypt certificate provisioning
 
+## Running Multiple Environments (Production + Dev)
+
+You can run both production and development environments on the same server without conflicts.
+
+### Files
+
+| Environment | Compose File | Env Example |
+|-------------|--------------|-------------|
+| Production | `docker-compose.coolify.yml` | `.env.coolify.example` |
+| Development | `docker-compose.coolify-dev.yml` | `.env.coolify-dev.example` |
+
+### Key Differences
+
+| Resource | Production | Development |
+|----------|------------|-------------|
+| Container names | `roamie-*` | `roamie-dev-*` |
+| WireGuard port | 51820/udp | 51821/udp |
+| SSH Tunnel port | 2222 | 2223 |
+| WireGuard interface | `wg0` | `wg-dev` |
+| VPN network | 10.100.0.0/16 | 10.101.0.0/16 |
+| Tunnel port range | 10000-20000 | 20000-30000 |
+| Database | `roamie_vpn` | `roamie_vpn_dev` |
+| Volumes | `roamie_*` | `roamie_dev_*` |
+
+### Firewall for Both Environments
+
+```bash
+# Production
+sudo ufw allow 51820/udp  # WireGuard prod
+sudo ufw allow 2222/tcp   # SSH Tunnel prod
+
+# Development
+sudo ufw allow 51821/udp  # WireGuard dev
+sudo ufw allow 2223/tcp   # SSH Tunnel dev
+```
+
+### Deploying Both in Coolify
+
+1. Create two separate services in Coolify
+2. **Production**: Use `docker-compose.coolify.yml`
+3. **Development**: Use `docker-compose.coolify-dev.yml`
+4. Configure different domains (e.g., `vpn-api.domain.com` and `vpn-api-dev.domain.com`)
+5. Set environment variables from respective `.env.*.example` files
+
 ## Security Notes
 
 - Never commit `.env` files or actual credentials
 - Use Coolify's secrets management for sensitive values
 - Regularly rotate `JWT_SECRET` (will invalidate all tokens)
 - Keep `POSTGRES_PASSWORD` secure and unique
+- Use different `JWT_SECRET` for production and development
