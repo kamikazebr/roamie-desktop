@@ -168,20 +168,43 @@ var tunnelRegisterCmd = &cobra.Command{
 var upgradeCmd = &cobra.Command{
 	Use:   "upgrade",
 	Short: "Upgrade roamie to the latest version",
-	Run:   runUpgrade,
+	Long: `Download and install the latest version of roamie from GitHub Releases.
+
+The upgrade process:
+  1. Checks for newer version on GitHub
+  2. Downloads the binary for your platform
+  3. Verifies SHA256 checksum
+  4. Backs up current binary
+  5. Installs new version
+  6. Restarts daemon if running (use --no-restart to skip)
+
+Examples:
+  roamie upgrade              # Upgrade and restart daemon automatically
+  roamie upgrade --no-restart # Upgrade but don't restart daemon
+  roamie upgrade --force      # Reinstall even if already on latest version`,
+	Run: runUpgrade,
 }
 
 var upgradeCheckCmd = &cobra.Command{
 	Use:   "check",
 	Short: "Check if a new version is available",
-	Run:   runUpgradeCheck,
+	Long: `Check GitHub Releases for a newer version of roamie.
+
+Shows current version, latest available version, and release notes.
+Does not download or install anything.
+
+Example:
+  roamie upgrade check`,
+	Run: runUpgradeCheck,
 }
 
 var upgradeForce bool
+var upgradeNoRestart bool
 
 func init() {
 	setupDaemonCmd.Flags().BoolVarP(&setupDaemonYes, "yes", "y", false, "Skip confirmation prompt")
 	upgradeCmd.Flags().BoolVarP(&upgradeForce, "force", "f", false, "Force upgrade even if already on latest version")
+	upgradeCmd.Flags().BoolVar(&upgradeNoRestart, "no-restart", false, "Do not restart daemon after upgrade")
 	upgradeCmd.AddCommand(upgradeCheckCmd)
 	authCmd.AddCommand(loginCmd, daemonCmd, statusCmd, refreshCmd, logoutCmd)
 	sshCmd.AddCommand(sshSyncCmd, sshStatusCmd, sshEnableCmd, sshDisableCmd, sshSetIntervalCmd)
@@ -916,12 +939,13 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	fmt.Println("\n✅ Upgrade successful!")
 	fmt.Printf("Now running: %s\n", result.LatestVersion)
 
-	// Check if daemon is running and offer to restart
+	// Check if daemon is running and restart it (unless --no-restart flag is set)
 	if isServiceRunning("roamie") {
-		fmt.Print("\nDaemon is running. Restart it? [y/N]: ")
-		var response string
-		fmt.Scanln(&response)
-		if response == "y" || response == "Y" {
+		if upgradeNoRestart {
+			fmt.Println("\nDaemon is running. Skipping restart (--no-restart flag set).")
+			fmt.Println("Restart manually: sudo systemctl restart roamie")
+		} else {
+			fmt.Println("\nRestarting daemon...")
 			if err := exec.Command("systemctl", "restart", "roamie").Run(); err != nil {
 				fmt.Printf("Warning: Failed to restart daemon: %v\n", err)
 				fmt.Println("Please restart manually: sudo systemctl restart roamie")
