@@ -42,7 +42,7 @@ services:
         condition: service_healthy
     environment:
       # Database
-      DATABASE_URL: postgres://${DEV_DB_USER}:${DEV_DB_PASSWORD}@postgres:5432/${DEV_DB_NAME}?sslmode=disable
+      DATABASE_URL: postgres://${DEV_DB_USER}:${DEV_DB_PASSWORD}@${DEV_DB_HOST:-postgres}:5432/${DEV_DB_NAME}?sslmode=disable
 
       # Server Configuration
       API_HOST: ${DEV_API_HOST}
