@@ -27,10 +27,10 @@ jobs:
         run: ./scripts/release.sh ${{ steps.version.outputs.VERSION }}
 
       - name: Create Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create ${{ steps.version.outputs.VERSION }} \
-            dist/roamie-* dist/checksums.txt \
-            --title "${{ steps.version.outputs.VERSION }}" \
-            --generate-notes
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/roamie-*
+            dist/checksums.txt
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
