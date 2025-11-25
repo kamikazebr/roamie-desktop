@@ -4,7 +4,7 @@
 # Differences from production:
 # - Container names: roamie-dev-*
 # - Volumes: roamie_dev_*
-# - Ports: 51821 (WG), 2223 (SSH), 8081 (API)
+# - Ports: 51821 (WG), 2223 (SSH), 8082 (API)
 # - Network: 10.101.0.0/16 (instead of 10.100.0.0/16)
 # - WireGuard interface: wg-dev
 
@@ -17,13 +17,13 @@ services:
     container_name: roamie-dev-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-roamie_dev}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
-      POSTGRES_DB: ${POSTGRES_DB:-roamie_vpn_dev}
+      POSTGRES_USER: ${DEV_DB_USER}
+      POSTGRES_PASSWORD: ${DEV_DB_PASSWORD}
+      POSTGRES_DB: ${DEV_DB_NAME}
     volumes:
       - roamie_dev_postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-roamie_dev} -d ${POSTGRES_DB:-roamie_vpn_dev}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DEV_DB_USER} -d ${DEV_DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -34,55 +34,52 @@ services:
   # Roamie VPN Server (DEV)
   # ============================================
   roamie-server:
-    image: ghcr.io/${GITHUB_REPOSITORY:-kamikazebr/roamie-desktop}/roamie-server:${IMAGE_TAG:-latest}
+    image: ghcr.io/${DEV_GITHUB_REPOSITORY:-kamikazebr/roamie-desktop}/roamie-server:${DEV_IMAGE_TAG:-latest}
     container_name: roamie-dev-server
     restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
     environment:
-      # Database - built from POSTGRES_* vars (internal PostgreSQL)
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
+      # Database
+      DATABASE_URL: postgres://${DEV_DB_USER}:${DEV_DB_PASSWORD}@postgres:5432/${DEV_DB_NAME}?sslmode=disable
 
       # Server Configuration
-      API_HOST: ${API_HOST}
-      API_PORT: ${API_PORT}
+      API_HOST: ${DEV_API_HOST}
+      API_PORT: ${DEV_API_PORT}
 
       # Authentication
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_EXPIRATION: ${JWT_EXPIRATION}
-      AUTH_CODE_EXPIRATION: ${AUTH_CODE_EXPIRATION}
+      JWT_SECRET: ${DEV_JWT_SECRET}
+      JWT_EXPIRATION: ${DEV_JWT_EXPIRATION}
+      AUTH_CODE_EXPIRATION: ${DEV_AUTH_CODE_EXPIRATION}
 
       # Email Service (Resend)
-      RESEND_API_KEY: ${RESEND_API_KEY}
-      FROM_EMAIL: ${FROM_EMAIL}
+      RESEND_API_KEY: ${DEV_RESEND_API_KEY}
+      FROM_EMAIL: ${DEV_FROM_EMAIL}
 
-      # WireGuard Configuration - DEV uses different interface and network
-      WG_INTERFACE: ${WG_INTERFACE}
-      WG_PORT: ${WG_PORT}
-      WG_SERVER_PUBLIC_ENDPOINT: ${WG_SERVER_PUBLIC_ENDPOINT}
-      WG_BASE_NETWORK: ${WG_BASE_NETWORK}
-      WG_SUBNET_SIZE: ${WG_SUBNET_SIZE}
-      WG_FALLBACK_NETWORKS: ${WG_FALLBACK_NETWORKS}
+      # WireGuard Configuration (DEV)
+      WG_INTERFACE: ${DEV_WG_INTERFACE}
+      WG_PORT: ${DEV_WG_PORT}
+      WG_SERVER_PUBLIC_ENDPOINT: ${DEV_WG_SERVER_PUBLIC_ENDPOINT}
+      WG_BASE_NETWORK: ${DEV_WG_BASE_NETWORK}
+      WG_SUBNET_SIZE: ${DEV_WG_SUBNET_SIZE}
+      WG_FALLBACK_NETWORKS: ${DEV_WG_FALLBACK_NETWORKS}
 
       # Device Management
-      MAX_DEVICES_PER_USER: ${MAX_DEVICES_PER_USER}
+      MAX_DEVICES_PER_USER: ${DEV_MAX_DEVICES_PER_USER}
 
-      # SSH Tunnel Configuration - DEV uses different port range
-      TUNNEL_PORT_START: ${TUNNEL_PORT_START}
-      TUNNEL_PORT_END: ${TUNNEL_PORT_END}
+      # SSH Tunnel Configuration (DEV)
+      TUNNEL_PORT_START: ${DEV_TUNNEL_PORT_START}
+      TUNNEL_PORT_END: ${DEV_TUNNEL_PORT_END}
 
       # Firebase (Optional)
-      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH}
+      FIREBASE_CREDENTIALS_PATH: ${DEV_FIREBASE_CREDENTIALS_PATH}
     volumes:
       - roamie_dev_wireguard:/etc/wireguard
-      - ${FIREBASE_CREDENTIALS_FILE:-/dev/null}:/app/firebase-credentials.json:ro
     ports:
       # DEV ports - different from production
-      - "${WG_PORT:-51821}:51820/udp"
+      - "${DEV_WG_PORT:-51821}:51821/udp"
       - "2223:2222"
-      # Uncomment if not using Coolify proxy
-      # - "${API_PORT:-8081}:8080"
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
@@ -95,14 +92,14 @@ services:
       - roamie-dev-internal
       - coolify
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${DEV_API_PORT:-8082}/health"]
       interval: 30s
       timeout: 10s
       start_period: 10s
       retries: 3
     labels:
       - "coolify.managed=true"
-      - "coolify.port=8080"
+      - "coolify.port=${DEV_API_PORT:-8082}"
 
 # ============================================
 # Volumes (DEV - separate from production)
