@@ -46,8 +46,8 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # Database (internal PostgreSQL)
-      DATABASE_URL: postgres://${POSTGRES_USER:-roamie}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-roamie_vpn}?sslmode=disable
+      # Database - use DATABASE_URL directly or internal PostgreSQL
+      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-roamie}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-roamie_vpn}?sslmode=disable}
 
       # Server Configuration
       SERVER_PORT: ${SERVER_PORT:-8080}
