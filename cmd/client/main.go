@@ -15,6 +15,7 @@ import (
 	"github.com/kamikazebr/roamie-desktop/internal/client/daemon"
 	"github.com/kamikazebr/roamie-desktop/internal/client/ssh"
 	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
+	"github.com/kamikazebr/roamie-desktop/internal/client/upgrade"
 	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
 	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 	"github.com/kamikazebr/roamie-desktop/pkg/version"
@@ -164,12 +165,28 @@ var tunnelRegisterCmd = &cobra.Command{
 	Run:   runTunnelRegister,
 }
 
+var upgradeCmd = &cobra.Command{
+	Use:   "upgrade",
+	Short: "Upgrade roamie to the latest version",
+	Run:   runUpgrade,
+}
+
+var upgradeCheckCmd = &cobra.Command{
+	Use:   "check",
+	Short: "Check if a new version is available",
+	Run:   runUpgradeCheck,
+}
+
+var upgradeForce bool
+
 func init() {
 	setupDaemonCmd.Flags().BoolVarP(&setupDaemonYes, "yes", "y", false, "Skip confirmation prompt")
+	upgradeCmd.Flags().BoolVarP(&upgradeForce, "force", "f", false, "Force upgrade even if already on latest version")
+	upgradeCmd.AddCommand(upgradeCheckCmd)
 	authCmd.AddCommand(loginCmd, daemonCmd, statusCmd, refreshCmd, logoutCmd)
 	sshCmd.AddCommand(sshSyncCmd, sshStatusCmd, sshEnableCmd, sshDisableCmd, sshSetIntervalCmd)
 	tunnelCmd.AddCommand(tunnelStartCmd, tunnelStopCmd, tunnelStatusCmd, tunnelRegisterCmd)
-	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd)
+	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd)
 }
 
 func main() {
@@ -827,4 +844,95 @@ func runTunnelStatus(cmd *cobra.Command, args []string) {
 
 	fmt.Println("\nTunnel not registered for this device.")
 	fmt.Println("Run: roamie tunnel register")
+}
+
+// Upgrade command implementations
+
+func runUpgradeCheck(cmd *cobra.Command, args []string) {
+	fmt.Println("Checking for updates...")
+
+	result, err := upgrade.CheckForUpdates()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nCurrent version: %s\n", result.CurrentVersion)
+	fmt.Printf("Latest version:  %s\n", result.LatestVersion)
+
+	if !result.UpdateAvailable {
+		fmt.Println("\n✓ You are running the latest version!")
+		return
+	}
+
+	fmt.Println("\n🆕 A new version is available!")
+
+	if result.ReleaseNotes != "" {
+		fmt.Println("\nRelease notes:")
+		fmt.Println("─────────────────────────────────")
+		// Truncate long release notes
+		notes := result.ReleaseNotes
+		if len(notes) > 500 {
+			notes = notes[:500] + "...\n\nSee full notes at: " + result.ReleaseURL
+		}
+		fmt.Println(notes)
+		fmt.Println("─────────────────────────────────")
+	}
+
+	fmt.Println("\nRun 'roamie upgrade' to update.")
+}
+
+func runUpgrade(cmd *cobra.Command, args []string) {
+	fmt.Println("Checking for updates...")
+
+	result, err := upgrade.CheckForUpdates()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nCurrent version: %s\n", result.CurrentVersion)
+	fmt.Printf("Latest version:  %s\n", result.LatestVersion)
+
+	if !result.UpdateAvailable && !upgradeForce {
+		fmt.Println("\n✓ You are running the latest version!")
+		fmt.Println("Use --force to reinstall anyway.")
+		return
+	}
+
+	if result.DownloadURL == "" {
+		fmt.Printf("\nError: No compatible binary found for your platform.\n")
+		fmt.Printf("Please download manually from: %s\n", result.ReleaseURL)
+		os.Exit(1)
+	}
+
+	fmt.Printf("\nUpgrading to %s...\n\n", result.LatestVersion)
+
+	if err := upgrade.Upgrade(result); err != nil {
+		fmt.Printf("\nError: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\n✅ Upgrade successful!")
+	fmt.Printf("Now running: %s\n", result.LatestVersion)
+
+	// Check if daemon is running and offer to restart
+	if isServiceRunning("roamie") {
+		fmt.Print("\nDaemon is running. Restart it? [y/N]: ")
+		var response string
+		fmt.Scanln(&response)
+		if response == "y" || response == "Y" {
+			if err := exec.Command("systemctl", "restart", "roamie").Run(); err != nil {
+				fmt.Printf("Warning: Failed to restart daemon: %v\n", err)
+				fmt.Println("Please restart manually: sudo systemctl restart roamie")
+			} else {
+				fmt.Println("✓ Daemon restarted")
+			}
+		}
+	}
+}
+
+func isServiceRunning(name string) bool {
+	err := exec.Command("systemctl", "is-active", "--quiet", name).Run()
+	return err == nil
 }
