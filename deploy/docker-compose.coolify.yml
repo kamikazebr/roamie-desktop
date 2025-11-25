@@ -1,0 +1,137 @@
+# Roamie VPN Server - Coolify Deployment
+# Deploy this file as a Docker Compose stack in Coolify
+#
+# IMPORTANT: Configure environment variables in Coolify UI, NOT in this file
+# See .env.coolify.example for required variables
+#
+# IMAGE OPTIONS:
+# Option 1 (recommended): Use pre-built image from GitHub Container Registry
+# Option 2: Build from source (uncomment build section, comment image line)
+
+services:
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: roamie-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-roamie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-roamie_vpn}
+    volumes:
+      - roamie_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-roamie} -d ${POSTGRES_DB:-roamie_vpn}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - roamie-internal
+
+  # ============================================
+  # Roamie VPN Server
+  # ============================================
+  roamie-server:
+    # Option 1: Use pre-built image (recommended for Coolify)
+    image: ghcr.io/${GITHUB_REPOSITORY:-kamikazebr/roamie-desktop}/roamie-server:${IMAGE_TAG:-latest}
+    # Option 2: Build from source (uncomment below, comment image above)
+    # build:
+    #   context: ..
+    #   dockerfile: deploy/Dockerfile
+    container_name: roamie-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Database (internal PostgreSQL)
+      DATABASE_URL: postgres://${POSTGRES_USER:-roamie}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-roamie_vpn}?sslmode=disable
+
+      # Server Configuration
+      SERVER_PORT: ${SERVER_PORT:-8080}
+      ENABLE_TLS: "false"  # Coolify handles SSL termination
+
+      # Authentication
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      JWT_EXPIRATION: ${JWT_EXPIRATION:-168h}
+      AUTH_CODE_EXPIRATION: ${AUTH_CODE_EXPIRATION:-5m}
+
+      # Email Service (Resend)
+      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY is required}
+      EMAIL_FROM: ${EMAIL_FROM:-noreply@yourdomain.com}
+
+      # WireGuard Configuration
+      WG_INTERFACE: ${WG_INTERFACE:-wg0}
+      WG_PORT: ${WG_PORT:-51820}
+      WG_SERVER_PUBLIC_ENDPOINT: ${WG_SERVER_PUBLIC_ENDPOINT:?WG_SERVER_PUBLIC_ENDPOINT is required}
+      WG_BASE_NETWORK: ${WG_BASE_NETWORK:-10.100.0.0/16}
+      WG_SUBNET_SIZE: ${WG_SUBNET_SIZE:-29}
+
+      # Device Management
+      MAX_DEVICES_PER_USER: ${MAX_DEVICES_PER_USER:-5}
+      AUTO_REGISTER_DEVICES: ${AUTO_REGISTER_DEVICES:-true}
+
+      # SSH Tunnel Configuration
+      SSH_TUNNEL_PORT: ${SSH_TUNNEL_PORT:-2222}
+      TUNNEL_PORT_RANGE_START: ${TUNNEL_PORT_RANGE_START:-10000}
+      TUNNEL_PORT_RANGE_END: ${TUNNEL_PORT_RANGE_END:-20000}
+
+      # Firebase (Optional - for mobile app)
+      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
+    volumes:
+      # WireGuard configuration persistence
+      - roamie_wireguard:/etc/wireguard
+      # Firebase credentials (if using mobile app auth)
+      - ${FIREBASE_CREDENTIALS_FILE:-/dev/null}:/app/firebase-credentials.json:ro
+    ports:
+      # WireGuard UDP - must be exposed directly (not through reverse proxy)
+      - "${WG_PORT:-51820}:51820/udp"
+      # SSH Tunnel - must be exposed directly
+      - "${SSH_TUNNEL_PORT:-2222}:2222"
+      # HTTP API - Coolify will proxy this through its reverse proxy
+      # Only expose if not using Coolify's built-in proxy
+      # - "${SERVER_PORT:-8080}:8080"
+    # Required for WireGuard
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      - net.ipv4.ip_forward=1
+      - net.ipv4.conf.all.src_valid_mark=1
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      - roamie-internal
+      - coolify  # Coolify's proxy network (may need adjustment based on your setup)
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+    labels:
+      # Coolify labels for automatic proxy configuration
+      # Adjust these based on your Coolify version and setup
+      - "coolify.managed=true"
+      - "coolify.port=8080"
+
+# ============================================
+# Volumes
+# ============================================
+volumes:
+  roamie_postgres_data:
+    driver: local
+  roamie_wireguard:
+    driver: local
+
+# ============================================
+# Networks
+# ============================================
+networks:
+  roamie-internal:
+    driver: bridge
+  coolify:
+    external: true
+    name: coolify  # Default Coolify network - adjust if different
