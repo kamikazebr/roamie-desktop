@@ -4,7 +4,7 @@
 # Differences from production:
 # - Container names: roamie-dev-*
 # - Volumes: roamie_dev_*
-# - Ports: 51821 (WG), 2223 (SSH), 8082 (API)
+# - Ports: 51821 (WG), 2224 (SSH), 8082 (API)
 # - Network: 10.101.0.0/16 (instead of 10.100.0.0/16)
 # - WireGuard interface: wg-dev
 
@@ -79,7 +79,7 @@ services:
     ports:
       # DEV ports - different from production
       - "${DEV_WG_PORT:-51821}:51821/udp"
-      - "2223:2222"
+      - "${DEV_SSH_TUNNEL_PORT:-2224}:2222"
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
