@@ -1,0 +1,67 @@
+# Binaries
+/bin/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+wg-server
+wg-client
+
+# Test binaries
+*.test
+
+# Output of go coverage tool
+*.out
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Environment variables
+.env
+.env.*
+*.env
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WireGuard configs
+*.conf
+!configs/*.example.conf
+
+# Credentials and keys
+*.key
+*.pem
+credentials.json
+config/firebase-service-account.json
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+
+# Build artifacts
+build/
+
+# Crash reports (iOS/macOS)
+crash_reports/
+
+# Built binaries in root
+/roamie
+/roamie-server

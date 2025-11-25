@@ -1,0 +1,17 @@
+#
+# PAM configuration for biometric sudo authentication via Culodi mobile app
+#
+# Installation:
+#   sudo cp pam-config-sudo-biometric /etc/pam.d/sudo-biometric
+#
+# Usage:
+#   Edit /etc/pam.d/sudo and add this line at the top:
+#   @include sudo-biometric
+#
+
+# Require biometric authentication via mobile app
+auth    required    pam_exec.so expose_authtok quiet /usr/local/bin/culodi_biometric_auth.py sudo
+
+# Standard sudo authentication (fallback if biometric fails)
+# Uncomment this line if you want password fallback
+# auth    sufficient  pam_unix.so try_first_pass

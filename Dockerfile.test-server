@@ -1,0 +1,73 @@
+# Multi-stage build for testing
+FROM golang:1.23-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git
+
+WORKDIR /app
+
+# Copy go mod files
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build server binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o roamie-server ./cmd/server
+
+# Runtime image
+FROM alpine:latest
+
+# Install WireGuard and dependencies
+RUN apk add --no-cache \
+    wireguard-tools \
+    iptables \
+    ip6tables \
+    curl \
+    ca-certificates \
+    bash \
+    openssh-client \
+    openssh-server \
+    coreutils
+
+WORKDIR /root
+
+# Configure SSH server for reverse tunnels
+RUN ssh-keygen -A && \
+    mkdir -p /var/run/sshd && \
+    adduser -D -s /bin/bash tunnel && \
+    passwd -u tunnel && \
+    mkdir -p /home/tunnel/.ssh && \
+    chmod 755 /home/tunnel && \
+    chmod 700 /home/tunnel/.ssh && \
+    chown -R tunnel:tunnel /home/tunnel/.ssh && \
+    chmod g-s /home/tunnel /home/tunnel/.ssh && \
+    sed -i 's/^#*Port .*/Port 2222/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PermitRootLogin .*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PubkeyAuthentication .*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*PasswordAuthentication .*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*AllowTcpForwarding .*/AllowTcpForwarding yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*GatewayPorts .*/GatewayPorts yes/' /etc/ssh/sshd_config && \
+    sed -i 's/^#*UsePAM .*/UsePAM no/' /etc/ssh/sshd_config
+
+# Copy binary from builder
+COPY --from=builder /app/roamie-server .
+
+# Copy migrations
+COPY cmd/server/migrations ./migrations
+
+# Create startup script that runs roamie-server with custom tunnel server
+RUN echo '#!/bin/bash' > /start.sh && \
+    echo 'exec ./roamie-server' >> /start.sh && \
+    chmod +x /start.sh
+
+# Expose ports
+EXPOSE 8080 51820/udp
+
+# Health check
+HEALTHCHECK --interval=10s --timeout=5s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+# Run both sshd and roamie-server
+CMD ["/start.sh"]

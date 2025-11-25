@@ -1,0 +1,830 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/kamikazebr/roamie-desktop/internal/client/api"
+	"github.com/kamikazebr/roamie-desktop/internal/client/auth"
+	"github.com/kamikazebr/roamie-desktop/internal/client/config"
+	"github.com/kamikazebr/roamie-desktop/internal/client/daemon"
+	"github.com/kamikazebr/roamie-desktop/internal/client/ssh"
+	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
+	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
+	"github.com/kamikazebr/roamie-desktop/pkg/utils"
+	"github.com/kamikazebr/roamie-desktop/pkg/version"
+	"github.com/spf13/cobra"
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "roamie",
+	Short: "Roamie VPN Client - Device Authentication",
+	Long:  "CLI tool for managing Roamie VPN device authentication and JWT tokens",
+}
+
+var authCmd = &cobra.Command{
+	Use:   "auth",
+	Short: "Authentication commands",
+}
+
+var loginCmd = &cobra.Command{
+	Use:   "login [server-url]",
+	Short: "Login to Roamie VPN via QR code",
+	Args:  cobra.MaximumNArgs(1),
+	Run:   runLogin,
+}
+
+var daemonCmd = &cobra.Command{
+	Use:   "daemon",
+	Short: "Run token refresh daemon",
+	Run:   runDaemon,
+}
+
+var statusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show authentication status",
+	Run:   runStatus,
+}
+
+var refreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Manually refresh JWT token",
+	Run:   runRefresh,
+}
+
+var logoutCmd = &cobra.Command{
+	Use:   "logout",
+	Short: "Logout and delete credentials",
+	Run:   runLogout,
+}
+
+var setupDaemonYes bool
+
+var setupDaemonCmd = &cobra.Command{
+	Use:   "setup-daemon",
+	Short: "Setup systemd service for auto-refresh",
+	Run:   runSetupDaemon,
+}
+
+var uninstallDaemonCmd = &cobra.Command{
+	Use:   "uninstall-daemon",
+	Short: "Uninstall systemd service",
+	Run:   runUninstallDaemon,
+}
+
+var versionCmd = &cobra.Command{
+	Use:   "version",
+	Short: "Show version information",
+	Run: func(cmd *cobra.Command, args []string) {
+		fmt.Println(version.GetVersion("roamie"))
+	},
+}
+
+var sshCmd = &cobra.Command{
+	Use:   "ssh",
+	Short: "SSH key management commands",
+}
+
+var sshSyncCmd = &cobra.Command{
+	Use:   "sync",
+	Short: "Manually sync SSH keys from Firestore",
+	Run:   runSSHSync,
+}
+
+var sshStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show SSH sync status",
+	Run:   runSSHStatus,
+}
+
+var sshEnableCmd = &cobra.Command{
+	Use:   "enable",
+	Short: "Enable automatic SSH key sync",
+	Run:   runSSHEnable,
+}
+
+var sshDisableCmd = &cobra.Command{
+	Use:   "disable",
+	Short: "Disable automatic SSH key sync",
+	Run:   runSSHDisable,
+}
+
+var sshSetIntervalCmd = &cobra.Command{
+	Use:   "set-interval [duration]",
+	Short: "Set SSH sync interval (e.g., 5m, 1h, 30s)",
+	Args:  cobra.ExactArgs(1),
+	Run:   runSSHSetInterval,
+}
+
+var connectCmd = &cobra.Command{
+	Use:   "connect",
+	Short: "Connect to VPN using saved configuration",
+	Long:  "Connect to VPN using saved configuration. Requires root privileges.\nAlternatively, you can use: sudo wg-quick up roamie",
+	Run:   runConnect,
+}
+
+var disconnectCmd = &cobra.Command{
+	Use:   "disconnect",
+	Short: "Disconnect from VPN",
+	Long:  "Disconnect from VPN. Requires root privileges.\nAlternatively, you can use: sudo wg-quick down roamie",
+	Run:   runDisconnect,
+}
+
+var tunnelCmd = &cobra.Command{
+	Use:   "tunnel",
+	Short: "SSH reverse tunnel management commands",
+}
+
+var tunnelStartCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Start SSH reverse tunnel",
+	Run:   runTunnelStart,
+}
+
+var tunnelStopCmd = &cobra.Command{
+	Use:   "stop",
+	Short: "Stop SSH reverse tunnel",
+	Run:   runTunnelStop,
+}
+
+var tunnelStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show SSH tunnel status",
+	Run:   runTunnelStatus,
+}
+
+var tunnelRegisterCmd = &cobra.Command{
+	Use:   "register",
+	Short: "Register SSH key and allocate tunnel port",
+	Run:   runTunnelRegister,
+}
+
+func init() {
+	setupDaemonCmd.Flags().BoolVarP(&setupDaemonYes, "yes", "y", false, "Skip confirmation prompt")
+	authCmd.AddCommand(loginCmd, daemonCmd, statusCmd, refreshCmd, logoutCmd)
+	sshCmd.AddCommand(sshSyncCmd, sshStatusCmd, sshEnableCmd, sshDisableCmd, sshSetIntervalCmd)
+	tunnelCmd.AddCommand(tunnelStartCmd, tunnelStopCmd, tunnelStatusCmd, tunnelRegisterCmd)
+	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd)
+}
+
+func main() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+}
+
+func runLogin(cmd *cobra.Command, args []string) {
+	// Default to public HTTP endpoint for initial connection
+	// After VPN is connected, use internal gateway
+	serverURL := "http://felipenovaesrocha.xyz:8081"
+
+	// Check environment variable first
+	if envURL := os.Getenv("VPN_SERVER"); envURL != "" {
+		serverURL = envURL
+	}
+
+	// Command line argument overrides all
+	if len(args) > 0 {
+		serverURL = args[0]
+	}
+
+	if err := auth.Login(serverURL); err != nil {
+		fmt.Printf("Login failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runDaemon(cmd *cobra.Command, args []string) {
+	ctx := context.Background()
+
+	if err := daemon.Run(ctx); err != nil {
+		fmt.Printf("Daemon failed: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runStatus(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Status: Not logged in")
+		fmt.Println("\nRun 'roamie auth login' to authenticate")
+		return
+	}
+
+	fmt.Println("Roamie VPN Client - Status")
+	fmt.Println("==========================")
+	fmt.Printf("Server:       %s\n", cfg.ServerURL)
+	fmt.Printf("Device ID:    %s\n", cfg.DeviceID)
+	fmt.Printf("Created:      %s\n", cfg.CreatedAt.Format("2006-01-02 15:04:05"))
+	fmt.Printf("Expires:      %s\n", cfg.ExpiresAt.Format("2006-01-02 15:04:05"))
+
+	expiresIn := cfg.ExpiresIn()
+	if cfg.IsExpired() {
+		fmt.Printf("Status:       ❌ EXPIRED\n")
+		fmt.Println("\nRun 'roamie auth refresh' to renew")
+	} else if expiresIn < 24*time.Hour {
+		fmt.Printf("Status:       ⚠️  EXPIRES SOON (%s)\n", expiresIn.Round(time.Hour))
+		fmt.Println("\nRun 'roamie auth refresh' to renew")
+	} else {
+		fmt.Printf("Status:       ✓ VALID (%s remaining)\n", expiresIn.Round(time.Hour))
+	}
+}
+
+func runRefresh(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		fmt.Println("Error: Not logged in")
+		os.Exit(1)
+	}
+
+	fmt.Println("Refreshing JWT token...")
+
+	client := api.NewClient(cfg.ServerURL)
+	resp, err := client.RefreshJWT(cfg.RefreshToken)
+	if err != nil {
+		fmt.Printf("Refresh failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	expiresAt, _ := time.Parse("2006-01-02T15:04:05Z", resp.ExpiresAt)
+
+	cfg.JWT = resp.JWT
+	cfg.ExpiresAt = expiresAt
+
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Failed to save: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✓ JWT refreshed (expires: %s)\n", expiresAt.Format("2006-01-02 15:04:05"))
+}
+
+func runLogout(cmd *cobra.Command, args []string) {
+	// Step 1: Try to delete device from server
+	cfg, err := config.Load()
+	if err == nil && cfg != nil {
+		// We have config, try to delete device from server
+		fmt.Println("→ Removing device from server...")
+		client := api.NewClient(cfg.ServerURL)
+		if err := client.DeleteDevice(cfg.DeviceID, cfg.JWT); err != nil {
+			fmt.Printf("⚠️  Warning: Failed to remove device from server: %v\n", err)
+			fmt.Println("   (Device may still exist on server)")
+		} else {
+			fmt.Println("✓ Device removed from server")
+		}
+	}
+
+	// Step 2: Stop daemon if running
+	fmt.Println("→ Stopping daemon...")
+	exec.Command("systemctl", "stop", "roamie").Run()
+	exec.Command("systemctl", "disable", "roamie").Run()
+	fmt.Println("✓ Daemon stopped")
+
+	// Step 3: Disconnect VPN if connected
+	fmt.Println("→ Disconnecting VPN...")
+	if err := wireguard.Disconnect("roamie"); err != nil {
+		// Check if error is because interface doesn't exist
+		if !strings.Contains(err.Error(), "does not exist") &&
+			!strings.Contains(err.Error(), "No such device") {
+			fmt.Printf("⚠️  Warning: Failed to disconnect VPN: %v\n", err)
+		}
+	} else {
+		fmt.Println("✓ VPN disconnected")
+	}
+
+	// Step 4: Clean local files
+	fmt.Println("→ Cleaning local files...")
+
+	// Remove config
+	if err := config.Delete(); err != nil && !os.IsNotExist(err) {
+		fmt.Printf("⚠️  Warning: Failed to remove config: %v\n", err)
+	}
+
+	// Remove device info directory
+	configDir, _ := config.GetConfigDir()
+	devicesDir := filepath.Join(strings.Replace(configDir, ".roamie", ".roamie-vpn", 1), "devices")
+	os.RemoveAll(devicesDir)
+
+	// Remove WireGuard config
+	wgConfig := "/etc/wireguard/roamie.conf"
+	os.Remove(wgConfig)
+
+	fmt.Println("✓ Logged out successfully")
+}
+
+func runSetupDaemon(cmd *cobra.Command, args []string) {
+	// Get current executable path
+	exePath, err := os.Executable()
+	if err != nil {
+		fmt.Printf("Failed to detect binary path: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Get actual user (detects SUDO_USER automatically)
+	username, homeDir, err := utils.GetActualUser()
+	if err != nil {
+		fmt.Printf("Failed to get user info: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Auto-create systemd service
+	serviceContent := fmt.Sprintf(`[Unit]
+Description=Roamie VPN Client Auth Refresh Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=%s
+Environment=HOME=%s
+ExecStart=%s auth daemon
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target`, username, homeDir, exePath)
+
+	servicePath := "/etc/systemd/system/roamie.service"
+
+	if !setupDaemonYes {
+		fmt.Println("Creating systemd service...")
+		fmt.Printf("\nService file: %s\n", servicePath)
+		fmt.Println("\nContent:")
+		fmt.Println("---")
+		fmt.Println(serviceContent)
+		fmt.Println("---")
+
+		fmt.Print("\nCreate this service? [y/N]: ")
+		var response string
+		fmt.Scanln(&response)
+
+		if response != "y" && response != "Y" {
+			fmt.Println("Cancelled")
+			return
+		}
+	}
+
+	if err := os.WriteFile(servicePath, []byte(serviceContent), 0644); err != nil {
+		fmt.Printf("Failed to create service: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✓ Service file created")
+
+	// Reload systemd
+	exec.Command("systemctl", "daemon-reload").Run()
+	fmt.Println("✓ Systemd reloaded")
+
+	// Enable service
+	if err := exec.Command("systemctl", "enable", "roamie").Run(); err != nil {
+		fmt.Printf("Warning: Failed to enable service: %v\n", err)
+	} else {
+		fmt.Println("✓ Service enabled")
+	}
+
+	// Restart service (use restart instead of start to ensure new binary is used)
+	if err := exec.Command("systemctl", "restart", "roamie").Run(); err != nil {
+		fmt.Printf("Warning: Failed to restart service: %v\n", err)
+	} else {
+		fmt.Println("✓ Service started")
+	}
+
+	if !setupDaemonYes {
+		fmt.Println("\nDaemon setup complete!")
+		fmt.Println("Check status: systemctl status roamie")
+		fmt.Println("View logs: journalctl -u roamie -f")
+	}
+}
+
+func runUninstallDaemon(cmd *cobra.Command, args []string) {
+	servicePath := "/etc/systemd/system/roamie.service"
+
+	// Check if service exists
+	if _, err := os.Stat(servicePath); os.IsNotExist(err) {
+		fmt.Println("Service not installed")
+		return
+	}
+
+	fmt.Println("Uninstalling systemd service...")
+	fmt.Printf("\nService file: %s\n", servicePath)
+	fmt.Print("\nUninstall this service? [y/N]: ")
+
+	var response string
+	fmt.Scanln(&response)
+
+	if response != "y" && response != "Y" {
+		fmt.Println("Cancelled")
+		return
+	}
+
+	// Stop service
+	if err := exec.Command("systemctl", "stop", "roamie").Run(); err != nil {
+		fmt.Printf("Warning: Failed to stop service: %v\n", err)
+	} else {
+		fmt.Println("✓ Service stopped")
+	}
+
+	// Disable service
+	if err := exec.Command("systemctl", "disable", "roamie").Run(); err != nil {
+		fmt.Printf("Warning: Failed to disable service: %v\n", err)
+	} else {
+		fmt.Println("✓ Service disabled")
+	}
+
+	// Remove service file
+	if err := os.Remove(servicePath); err != nil {
+		fmt.Printf("Failed to remove service file: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ Service file removed")
+
+	// Reload systemd
+	exec.Command("systemctl", "daemon-reload").Run()
+	fmt.Println("✓ Systemd reloaded")
+
+	fmt.Println("\nDaemon uninstalled successfully!")
+}
+
+func runSSHSync(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated. Please run 'roamie auth login' first")
+		os.Exit(1)
+	}
+
+	if cfg.JWT == "" {
+		fmt.Println("Error: Not authenticated")
+		os.Exit(1)
+	}
+
+	// Create SSH manager
+	sshManager, err := ssh.NewManager(cfg.ServerURL)
+	if err != nil {
+		fmt.Printf("Error: Failed to create SSH manager: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("Syncing SSH keys from Firestore...")
+
+	// Sync keys
+	result, err := sshManager.SyncKeys(cfg)
+	if err != nil {
+		fmt.Printf("Error: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Display results
+	if len(result.Added) > 0 {
+		fmt.Printf("✓ Added %d key(s)\n", len(result.Added))
+	}
+	if len(result.Removed) > 0 {
+		fmt.Printf("✓ Removed %d key(s)\n", len(result.Removed))
+	}
+	if len(result.Added) == 0 && len(result.Removed) == 0 {
+		fmt.Println("✓ No changes (already in sync)")
+	}
+	fmt.Printf("✓ Total keys: %d\n", result.Total)
+}
+
+func runSSHStatus(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated")
+		os.Exit(1)
+	}
+
+	fmt.Println("SSH Sync Status")
+	fmt.Println("===============")
+	fmt.Printf("Enabled:  %v\n", cfg.SSHSyncEnabled)
+	fmt.Printf("Interval: %v\n", cfg.SSHSyncInterval)
+
+	// Get current keys
+	sshManager, err := ssh.NewManager(cfg.ServerURL)
+	if err != nil {
+		fmt.Printf("\nError getting current keys: %v\n", err)
+		return
+	}
+
+	keys, err := sshManager.GetCurrentKeys()
+	if err != nil {
+		fmt.Printf("\nError reading authorized_keys: %v\n", err)
+		return
+	}
+
+	fmt.Printf("\nCurrent Roamie-managed keys: %d\n", len(keys))
+	if len(keys) > 0 {
+		fmt.Println("\nKeys:")
+		for i, key := range keys {
+			// Show first 50 chars of key
+			keyPreview := key
+			if len(keyPreview) > 50 {
+				keyPreview = keyPreview[:50] + "..."
+			}
+			fmt.Printf("  %d. %s\n", i+1, keyPreview)
+		}
+	}
+}
+
+func runSSHEnable(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated")
+		os.Exit(1)
+	}
+
+	cfg.SSHSyncEnabled = true
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Error: Failed to save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✓ SSH sync enabled")
+	fmt.Println("\nNote: Restart the daemon for changes to take effect:")
+	fmt.Println("  sudo systemctl restart roamie-client")
+}
+
+func runSSHDisable(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated")
+		os.Exit(1)
+	}
+
+	cfg.SSHSyncEnabled = false
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Error: Failed to save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✓ SSH sync disabled")
+}
+
+func runSSHSetInterval(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated")
+		os.Exit(1)
+	}
+
+	// Parse duration
+	duration, err := time.ParseDuration(args[0])
+	if err != nil {
+		fmt.Printf("Error: Invalid duration format. Use formats like: 5m, 1h, 30s\n")
+		os.Exit(1)
+	}
+
+	cfg.SSHSyncInterval = duration
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Error: Failed to save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Printf("✓ SSH sync interval set to %v\n", duration)
+	fmt.Println("\nNote: Restart the daemon for changes to take effect:")
+	fmt.Println("  sudo systemctl restart roamie-client")
+}
+
+func runConnect(cmd *cobra.Command, args []string) {
+	// Check if running as root
+	if os.Geteuid() != 0 {
+		fmt.Println("Error: This command requires root privileges")
+		fmt.Println("Please run: sudo roamie connect")
+		os.Exit(1)
+	}
+
+	// Try to migrate from legacy storage first
+	config.MigrateFromLegacyStorage()
+
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not logged in")
+		fmt.Println("Please run 'roamie auth login' first (without sudo)")
+		os.Exit(1)
+	}
+
+	// Check if device info is available
+	if cfg.PrivateKey == "" || cfg.VpnIP == "" {
+		fmt.Println("Error: No device registration found")
+		fmt.Println("Please run 'roamie auth login' first")
+		os.Exit(1)
+	}
+
+	fmt.Println("Connecting to VPN...")
+	fmt.Printf("  Device: %s\n", cfg.DeviceName)
+	fmt.Printf("  VPN IP: %s\n", cfg.VpnIP)
+
+	// Prepare WireGuard config
+	wgConfig := wireguard.WireGuardConfig{
+		PrivateKey: cfg.PrivateKey,
+		Address:    cfg.VpnIP,
+		ServerKey:  cfg.ServerPublicKey,
+		Endpoint:   cfg.ServerEndpoint,
+		AllowedIPs: cfg.AllowedIPs,
+	}
+
+	// Connect (generates config file and connects)
+	if err := wireguard.Connect("roamie", wgConfig); err != nil {
+		fmt.Printf("Error: Failed to connect: %v\n", err)
+		os.Exit(1)
+	}
+
+	configPath := wireguard.GetWireGuardConfigPath("roamie")
+	fmt.Println("\n✅ Successfully connected to VPN!")
+	fmt.Printf("   Config: %s\n", configPath)
+	fmt.Printf("   Interface: roamie\n")
+	fmt.Printf("   VPN IP: %s\n", cfg.VpnIP)
+	fmt.Println("\nUseful commands:")
+	fmt.Println("  • Check status: sudo wg show roamie")
+	fmt.Println("  • Disconnect: sudo roamie disconnect")
+	fmt.Println("  • Or: sudo wg-quick down roamie")
+}
+
+func runDisconnect(cmd *cobra.Command, args []string) {
+	// Check if running as root
+	if os.Geteuid() != 0 {
+		fmt.Println("Error: This command requires root privileges")
+		fmt.Println("Please run: sudo roamie disconnect")
+		os.Exit(1)
+	}
+
+	fmt.Println("Disconnecting from VPN...")
+
+	// Disconnect
+	if err := wireguard.Disconnect("roamie"); err != nil {
+		fmt.Printf("Error: Failed to disconnect: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✓ Disconnected from VPN")
+}
+
+// Tunnel command implementations
+
+func runTunnelRegister(cmd *cobra.Command, args []string) {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		fmt.Println("Error: Not authenticated. Please run 'roamie auth login' first.")
+		os.Exit(1)
+	}
+
+	fmt.Println("Registering SSH tunnel...")
+
+	// Create tunnel client
+	tunnelClient, err := tunnel.NewClient(cfg)
+	if err != nil {
+		fmt.Printf("Error: Failed to initialize tunnel client: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Register SSH key with server
+	fmt.Println("Registering SSH public key...")
+	if err := tunnelClient.RegisterKey(); err != nil {
+		fmt.Printf("Error: Failed to register SSH key: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ SSH key registered")
+
+	// Allocate tunnel port
+	fmt.Println("Allocating tunnel port...")
+	apiClient := api.NewClient(cfg.ServerURL)
+	_, err = apiClient.GetTunnelStatus(cfg.JWT)
+	if err != nil {
+		fmt.Printf("Error: Failed to get tunnel status: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\n✅ SSH tunnel registered successfully!")
+	fmt.Println("\nNext steps:")
+	fmt.Println("  • Start tunnel: roamie tunnel start")
+	fmt.Println("  • Check status: roamie tunnel status")
+}
+
+func runTunnelStart(cmd *cobra.Command, args []string) {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		fmt.Println("Please run 'roamie auth login' first.")
+		os.Exit(1)
+	}
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated. Please run 'roamie auth login' first.")
+		os.Exit(1)
+	}
+
+	fmt.Println("Starting SSH tunnel...")
+
+	// Create tunnel client
+	tunnelClient, err := tunnel.NewClient(cfg)
+	if err != nil {
+		fmt.Printf("Error: Failed to initialize tunnel client: %v\n", err)
+		os.Exit(1)
+	}
+
+	// Connect tunnel
+	if err := tunnelClient.Connect(); err != nil {
+		fmt.Printf("Error: Failed to start tunnel: %v\n", err)
+		fmt.Println("\nTip: Make sure you've registered first with: roamie tunnel register")
+		os.Exit(1)
+	}
+
+	fmt.Println("✅ SSH tunnel started successfully!")
+	fmt.Println("\nThe tunnel will maintain connection with auto-reconnect.")
+	fmt.Println("Press Ctrl+C to stop.")
+
+	// Wait for interrupt
+	select {}
+}
+
+func runTunnelStop(cmd *cobra.Command, args []string) {
+	fmt.Println("Note: Tunnel processes should be stopped by interrupting 'roamie tunnel start'")
+	fmt.Println("Or managed via the daemon: roamie daemon")
+}
+
+func runTunnelStatus(cmd *cobra.Command, args []string) {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil || cfg == nil {
+		fmt.Println("Error: Not authenticated. Please run 'roamie auth login' first.")
+		os.Exit(1)
+	}
+
+	apiClient := api.NewClient(cfg.ServerURL)
+	status, err := apiClient.GetTunnelStatus(cfg.JWT)
+	if err != nil {
+		fmt.Printf("Error: Failed to get tunnel status: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("SSH Tunnel Status")
+	fmt.Println("=================")
+
+	if len(status.Tunnels) == 0 {
+		fmt.Println("\nNo tunnels registered.")
+		fmt.Println("Run: roamie tunnel register")
+		return
+	}
+
+	for _, t := range status.Tunnels {
+		if t.DeviceID == cfg.DeviceID {
+			fmt.Printf("\nDevice: %s\n", t.DeviceName)
+			fmt.Printf("Port: %d\n", t.Port)
+			fmt.Printf("Enabled: %v\n", t.Enabled)
+			fmt.Printf("Connected: %v\n", t.Connected)
+
+			if t.Enabled {
+				fmt.Println("\n✓ Tunnel is enabled")
+				fmt.Println("\nTo connect: roamie tunnel start")
+			} else {
+				fmt.Println("\n⚠️  Tunnel is disabled")
+				fmt.Println("Enable it from the Flutter app")
+			}
+			return
+		}
+	}
+
+	fmt.Println("\nTunnel not registered for this device.")
+	fmt.Println("Run: roamie tunnel register")
+}

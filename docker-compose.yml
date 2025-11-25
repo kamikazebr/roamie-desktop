@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: roamie-vpn-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: wireguard
+      POSTGRES_PASSWORD: wireguard
+      POSTGRES_DB: wireguard_vpn
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wireguard -d wireguard_vpn"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - roamie-vpn-network
+
+  # Opcional: pgAdmin para visualizar o banco
+  # Descomente se quiser interface gráfica
+  # pgadmin:
+  #   image: dpage/pgadmin4:latest
+  #   container_name: roamie-vpn-pgadmin
+  #   restart: unless-stopped
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: admin@roamie.com
+  #     PGADMIN_DEFAULT_PASSWORD: admin
+  #     PGADMIN_CONFIG_SERVER_MODE: 'False'
+  #   ports:
+  #     - "5050:80"
+  #   networks:
+  #     - roamie-vpn-network
+  #   depends_on:
+  #     - postgres
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  roamie-vpn-network:
+    driver: bridge

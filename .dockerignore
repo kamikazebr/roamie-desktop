@@ -1,0 +1,43 @@
+# Git
+.git
+.gitignore
+
+# Binaries
+wg-server
+wg-client
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Data
+data/
+*.db
+*.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# Build artifacts
+dist/
+build/
+
+# Credentials (explicit protection)
+config/
+*.json
+!package.json
+!tsconfig.json

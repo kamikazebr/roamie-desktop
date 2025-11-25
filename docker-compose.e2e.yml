@@ -1,0 +1,147 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database for testing
+  e2e-postgres:
+    image: postgres:15-alpine
+    container_name: roamie-e2e-db
+    environment:
+      POSTGRES_USER: roamie
+      POSTGRES_PASSWORD: roamie_test_password
+      POSTGRES_DB: roamie_vpn
+    ports:
+      - "5436:5432"
+    volumes:
+      - roamie-e2e-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U roamie -d roamie_vpn"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - roamie-e2e-net
+
+  # VPN Server for testing
+  e2e-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-server
+    container_name: roamie-e2e-server
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      DATABASE_URL: postgresql://roamie:roamie_test_password@e2e-postgres:5432/roamie_vpn?sslmode=disable
+      JWT_SECRET: test-jwt-secret-key-for-development-only
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      WG_SERVER_PUBLIC_ENDPOINT: e2e-server:51820
+      WG_BASE_NETWORK: 10.200.0.0/16
+      WG_SUBNET_SIZE: 29
+      MAX_DEVICES_PER_USER: 5
+      PORT: 8080
+      ENABLE_TLS: "false"
+      SKIP_EMAIL_SEND: "true"
+    ports:
+      - "8083:8080"
+      - "51822:51820/udp"
+      - "2223:2222/tcp"  # SSH tunnel server
+    depends_on:
+      e2e-postgres:
+        condition: service_healthy
+    networks:
+      - roamie-e2e-net
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - roamie-e2e-wg:/etc/wireguard
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Alice's Devices (using real roamie client)
+  alice-device-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client-real
+    container_name: alice-device-1-real
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      VPN_SERVER: http://e2e-server:8080
+    networks:
+      - roamie-e2e-net
+    volumes:
+      - /lib/modules:/lib/modules:ro
+    depends_on:
+      e2e-server:
+        condition: service_healthy
+
+  alice-device-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client-real
+    container_name: alice-device-2-real
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      VPN_SERVER: http://e2e-server:8080
+    networks:
+      - roamie-e2e-net
+    volumes:
+      - /lib/modules:/lib/modules:ro
+    depends_on:
+      e2e-server:
+        condition: service_healthy
+
+  # Bob's Devices (using real roamie client)
+  bob-device-1:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client-real
+    container_name: bob-device-1-real
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      VPN_SERVER: http://e2e-server:8080
+    networks:
+      - roamie-e2e-net
+    volumes:
+      - /lib/modules:/lib/modules:ro
+    depends_on:
+      e2e-server:
+        condition: service_healthy
+
+  bob-device-2:
+    build:
+      context: .
+      dockerfile: Dockerfile.test-client-real
+    container_name: bob-device-2-real
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    environment:
+      VPN_SERVER: http://e2e-server:8080
+    networks:
+      - roamie-e2e-net
+    volumes:
+      - /lib/modules:/lib/modules:ro
+    depends_on:
+      e2e-server:
+        condition: service_healthy
+
+networks:
+  roamie-e2e-net:
+    driver: bridge
+
+volumes:
+  roamie-e2e-db:
+  roamie-e2e-wg:
