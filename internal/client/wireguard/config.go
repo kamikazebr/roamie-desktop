@@ -41,16 +41,43 @@ func getWireGuardConfigDir() string {
 	switch runtime.GOOS {
 	case "darwin":
 		// macOS: Try common Homebrew paths
-		// Apple Silicon (M1/M2)
+		// Apple Silicon (M1/M2) - check if directory exists first
 		if _, err := os.Stat("/opt/homebrew/etc/wireguard"); err == nil {
 			return "/opt/homebrew/etc/wireguard"
 		}
-		// Intel Mac
+		// Intel Mac - check if directory exists
 		if _, err := os.Stat("/usr/local/etc/wireguard"); err == nil {
+			return "/usr/local/etc/wireguard"
+		}
+		// Check if /opt/homebrew exists (Apple Silicon) - prefer this path
+		if _, err := os.Stat("/opt/homebrew"); err == nil {
+			return "/opt/homebrew/etc/wireguard"
+		}
+		// Check if /usr/local exists (Intel Mac) - prefer this path
+		if _, err := os.Stat("/usr/local"); err == nil {
 			return "/usr/local/etc/wireguard"
 		}
 		// Fallback to /etc/wireguard (if user compiled from source)
 		return "/etc/wireguard"
+
+	case "windows":
+		// Windows: WireGuard stores configs in Program Files or user's AppData
+		// Check for WireGuard installation directory
+		programFiles := os.Getenv("ProgramFiles")
+		if programFiles != "" {
+			wgPath := filepath.Join(programFiles, "WireGuard", "Data", "Configurations")
+			if _, err := os.Stat(wgPath); err == nil {
+				return wgPath
+			}
+		}
+		// Fallback to user's AppData
+		appData := os.Getenv("LOCALAPPDATA")
+		if appData != "" {
+			return filepath.Join(appData, "WireGuard", "Configurations")
+		}
+		// Last resort fallback
+		return "C:\\Program Files\\WireGuard\\Data\\Configurations"
+
 	default:
 		// Linux and other Unix-like systems
 		return "/etc/wireguard"
@@ -68,6 +95,11 @@ func GetWireGuardConfigPath(interfaceName string) string {
 }
 
 func SaveConfig(configContent string, interfaceName string) (string, error) {
+	// Ensure config directory exists
+	if err := EnsureConfigDir(); err != nil {
+		return "", fmt.Errorf("failed to prepare WireGuard config directory: %w", err)
+	}
+
 	configPath := getWireGuardConfigPath(interfaceName)
 
 	// Save to WireGuard config directory (requires sudo)
@@ -79,6 +111,11 @@ func SaveConfig(configContent string, interfaceName string) (string, error) {
 }
 
 func Connect(interfaceName string, wgConfig WireGuardConfig) error {
+	// Ensure config directory exists
+	if err := EnsureConfigDir(); err != nil {
+		return fmt.Errorf("failed to prepare WireGuard config directory: %w", err)
+	}
+
 	// Generate config from provided device info
 	config := GenerateConfigFile(wgConfig)
 

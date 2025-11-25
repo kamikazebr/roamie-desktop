@@ -23,6 +23,17 @@ func Login(serverURL string) error {
 	fmt.Println("Roamie VPN Client - Login")
 	fmt.Println("=========================")
 
+	// Pre-flight check: Ensure WireGuard is installed
+	fmt.Println("\n→ Checking WireGuard installation...")
+	installed, err := wireguard.PromptInstall()
+	if err != nil {
+		return fmt.Errorf("WireGuard installation failed: %w", err)
+	}
+	if !installed {
+		return fmt.Errorf("WireGuard is required to continue. Please install it and try again")
+	}
+	fmt.Println("✓ WireGuard is available")
+
 	// Generate device ID
 	deviceID := uuid.New()
 	hostname, _ := os.Hostname()
