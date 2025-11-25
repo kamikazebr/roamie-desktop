@@ -59,7 +59,7 @@ services:
 
       # WireGuard Configuration - DEV uses different interface and network
       WG_INTERFACE: ${WG_INTERFACE:-wg-dev}
-      WG_PORT: ${WG_PORT:-51820}
+      WG_PORT: ${WG_PORT:-51821}
       WG_SERVER_PUBLIC_ENDPOINT: ${WG_SERVER_PUBLIC_ENDPOINT:?WG_SERVER_PUBLIC_ENDPOINT is required}
       WG_BASE_NETWORK: ${WG_BASE_NETWORK:-10.101.0.0/16}
       WG_SUBNET_SIZE: ${WG_SUBNET_SIZE:-29}
