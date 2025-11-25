@@ -32,4 +32,4 @@ jobs:
             dist/roamie-*
             dist/checksums.txt
           generate_release_notes: true
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.RELEASE_TOKEN }}
