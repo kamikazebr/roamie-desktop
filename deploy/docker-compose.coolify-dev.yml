@@ -41,39 +41,39 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # Database - use DATABASE_URL directly or internal PostgreSQL
-      DATABASE_URL: ${DATABASE_URL:-postgres://${POSTGRES_USER:-roamie_dev}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-roamie_vpn_dev}?sslmode=disable}
+      # Database - built from POSTGRES_* vars (internal PostgreSQL)
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?sslmode=disable
 
-      # Server Configuration (matches .env.production)
-      API_HOST: ${API_HOST:-0.0.0.0}
-      API_PORT: ${API_PORT:-8080}
+      # Server Configuration
+      API_HOST: ${API_HOST}
+      API_PORT: ${API_PORT}
 
       # Authentication
-      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      JWT_EXPIRATION: ${JWT_EXPIRATION:-168h}
-      AUTH_CODE_EXPIRATION: ${AUTH_CODE_EXPIRATION:-300}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRATION: ${JWT_EXPIRATION}
+      AUTH_CODE_EXPIRATION: ${AUTH_CODE_EXPIRATION}
 
       # Email Service (Resend)
-      RESEND_API_KEY: ${RESEND_API_KEY:?RESEND_API_KEY is required}
-      FROM_EMAIL: ${FROM_EMAIL:-noreply-dev@yourdomain.com}
+      RESEND_API_KEY: ${RESEND_API_KEY}
+      FROM_EMAIL: ${FROM_EMAIL}
 
       # WireGuard Configuration - DEV uses different interface and network
-      WG_INTERFACE: ${WG_INTERFACE:-wg-dev}
-      WG_PORT: ${WG_PORT:-51821}
-      WG_SERVER_PUBLIC_ENDPOINT: ${WG_SERVER_PUBLIC_ENDPOINT:?WG_SERVER_PUBLIC_ENDPOINT is required}
-      WG_BASE_NETWORK: ${WG_BASE_NETWORK:-10.101.0.0/16}
-      WG_SUBNET_SIZE: ${WG_SUBNET_SIZE:-29}
-      WG_FALLBACK_NETWORKS: ${WG_FALLBACK_NETWORKS:-10.201.0.0/16,10.151.0.0/16}
+      WG_INTERFACE: ${WG_INTERFACE}
+      WG_PORT: ${WG_PORT}
+      WG_SERVER_PUBLIC_ENDPOINT: ${WG_SERVER_PUBLIC_ENDPOINT}
+      WG_BASE_NETWORK: ${WG_BASE_NETWORK}
+      WG_SUBNET_SIZE: ${WG_SUBNET_SIZE}
+      WG_FALLBACK_NETWORKS: ${WG_FALLBACK_NETWORKS}
 
       # Device Management
-      MAX_DEVICES_PER_USER: ${MAX_DEVICES_PER_USER:-5}
+      MAX_DEVICES_PER_USER: ${MAX_DEVICES_PER_USER}
 
       # SSH Tunnel Configuration - DEV uses different port range
-      TUNNEL_PORT_START: ${TUNNEL_PORT_START:-20000}
-      TUNNEL_PORT_END: ${TUNNEL_PORT_END:-30000}
+      TUNNEL_PORT_START: ${TUNNEL_PORT_START}
+      TUNNEL_PORT_END: ${TUNNEL_PORT_END}
 
       # Firebase (Optional)
-      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH:-}
+      FIREBASE_CREDENTIALS_PATH: ${FIREBASE_CREDENTIALS_PATH}
     volumes:
       - roamie_dev_wireguard:/etc/wireguard
       - ${FIREBASE_CREDENTIALS_FILE:-/dev/null}:/app/firebase-credentials.json:ro
