@@ -33,19 +33,32 @@ func getPostgresPassword() string {
 }
 
 // CheckAndSetupDatabase ensures a PostgreSQL database is available
-// It tries in order: existing DATABASE_URL -> Docker -> error
+// It tries in order: existing DATABASE_URL (with retry) -> Docker -> error
 func CheckAndSetupDatabase() error {
 	log.Println("Checking database configuration...")
 
 	// Check if DATABASE_URL is set and working
 	databaseURL := os.Getenv("DATABASE_URL")
 	if databaseURL != "" {
-		if isDatabaseAccessible(databaseURL) {
-			log.Println("✓ Database already configured and accessible")
-			return nil
+		// If DATABASE_URL is explicitly set, wait for it with retries
+		// This is useful in Docker environments where DB may take time to start
+		log.Println("DATABASE_URL is set, waiting for database to become accessible...")
+		maxRetries := 30
+		for i := 0; i < maxRetries; i++ {
+			if isDatabaseAccessible(databaseURL) {
+				log.Println("✓ Database configured and accessible")
+				return nil
+			}
+			if i < maxRetries-1 {
+				log.Printf("Database not ready, retrying in 2 seconds... (%d/%d)", i+1, maxRetries)
+				time.Sleep(2 * time.Second)
+			}
 		}
-		log.Println("DATABASE_URL set but database not accessible, will try to setup...")
+		return fmt.Errorf("DATABASE_URL is set but database is not accessible after %d retries. Check your connection string and ensure the database is running", maxRetries)
 	}
+
+	// No DATABASE_URL set, try to setup with Docker
+	log.Println("No DATABASE_URL set, attempting automatic setup...")
 
 	// Check if Docker is installed
 	if !isDockerInstalled() {
