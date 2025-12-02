@@ -523,7 +523,7 @@ fi
 echo ""
 
 #===============================================================================
-# Phase 8: SSH Tunnel Registration
+# Phase 8: SSH Tunnel Registration (using CLI)
 #===============================================================================
 
 echo -e "${BLUE}Phase 8: SSH Tunnel Registration${NC}"
@@ -535,78 +535,72 @@ tunnel_check_server_listening "roamie-e2e-server" || {
   exit 1
 }
 
-echo -e "${YELLOW}→ Generating SSH keys and registering tunnels...${NC}"
+echo -e "${YELLOW}→ Registering tunnels using 'roamie tunnel register' CLI...${NC}"
+
+# Helper function to register tunnel via CLI and extract port
+register_tunnel_cli() {
+  local container=$1
+  local device_name=$2
+
+  echo -n "  → $device_name: "
+
+  # Run roamie tunnel register and capture output
+  local output=$(docker exec "$container" roamie tunnel register 2>&1)
+
+  if echo "$output" | grep -q "Error\|failed"; then
+    echo -e "${RED}✗${NC}"
+    echo "    Error: $output"
+    return 1
+  fi
+
+  # Extract port from output (looks for "Tunnel port allocated: XXXXX" or similar)
+  local port=$(echo "$output" | grep -oE 'port[^0-9]*([0-9]+)' | grep -oE '[0-9]+' | head -1)
+
+  if [ -z "$port" ]; then
+    # Fallback: get port from tunnel status
+    port=$(docker exec "$container" roamie tunnel status 2>&1 | grep -oE 'Port:[[:space:]]*([0-9]+)' | grep -oE '[0-9]+' | head -1)
+  fi
+
+  if [ -z "$port" ]; then
+    echo -e "${RED}✗ (could not determine port)${NC}"
+    echo "    Output: $output"
+    return 1
+  fi
+
+  echo -e "${GREEN}✓ (Port: $port)${NC}"
+  echo "$port"
+}
 
 # Alice Device 1
-echo -n "  → Alice Device 1: "
-# Generate tunnel key in the location where roamie client expects it (~/.roamie/tunnel_key)
-# Use -m PEM to ensure compatibility with Go's ssh.ParsePrivateKey
-docker exec alice-device-1-real sh -c "mkdir -p /root/.roamie && ssh-keygen -t rsa -b 2048 -m PEM -f /root/.roamie/tunnel_key -N '' >/dev/null 2>&1"
-ALICE_DEV1_PUBKEY=$(docker exec alice-device-1-real cat /root/.roamie/tunnel_key.pub)
-echo ""
-echo "    Debug: Public key being registered: ${ALICE_DEV1_PUBKEY:0:80}..."
-
-REGISTER_KEY_RESULT=$(curl -s -X POST "$SERVER_URL/api/tunnel/register-key" \
-  -H "Authorization: Bearer $ALICE_JWT" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$ALICE_DEV1_ID\",\"public_key\":\"$ALICE_DEV1_PUBKEY\"}")
-echo "    Debug: Register key result: $REGISTER_KEY_RESULT"
-
-# Query DB to verify key was saved
-DB_KEY=$(docker exec roamie-e2e-db psql -U roamie -d roamie_vpn -t -c "SELECT tunnel_ssh_key FROM devices WHERE id='$ALICE_DEV1_ID'" 2>/dev/null | tr -d ' \n')
-echo "    Debug: Key in DB (first 80 chars): ${DB_KEY:0:80}..."
-
-TUNNEL_RESPONSE=$(curl -s -X POST "$SERVER_URL/api/tunnel/register" \
-  -H "Authorization: Bearer $ALICE_JWT" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$ALICE_DEV1_ID\"}")
-
-ALICE_DEV1_PORT=$(echo "$TUNNEL_RESPONSE" | jq -r '.tunnel_port')
-echo -e "${GREEN}✓ (Port: $ALICE_DEV1_PORT)${NC}"
+ALICE_DEV1_PORT=$(register_tunnel_cli "alice-device-1-real" "Alice Device 1" | tail -1)
+if [ -z "$ALICE_DEV1_PORT" ] || ! [[ "$ALICE_DEV1_PORT" =~ ^[0-9]+$ ]]; then
+  echo -e "${RED}✗ Failed to register Alice Device 1 tunnel${NC}"
+  exit 1
+fi
 
 # Alice Device 2
-echo -n "  → Alice Device 2: "
-# Generate tunnel key in the location where roamie client expects it (~/.roamie/tunnel_key)
-# Use -m PEM to ensure compatibility with Go's ssh.ParsePrivateKey
-docker exec alice-device-2-real sh -c "mkdir -p /root/.roamie && ssh-keygen -t rsa -b 2048 -m PEM -f /root/.roamie/tunnel_key -N '' >/dev/null 2>&1"
-ALICE_DEV2_PUBKEY=$(docker exec alice-device-2-real cat /root/.roamie/tunnel_key.pub)
-
-curl -s -X POST "$SERVER_URL/api/tunnel/register-key" \
-  -H "Authorization: Bearer $ALICE_JWT" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$ALICE_DEV2_ID\",\"public_key\":\"$ALICE_DEV2_PUBKEY\"}" >/dev/null
-
-TUNNEL_RESPONSE=$(curl -s -X POST "$SERVER_URL/api/tunnel/register" \
-  -H "Authorization: Bearer $ALICE_JWT" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$ALICE_DEV2_ID\"}")
-
-ALICE_DEV2_PORT=$(echo "$TUNNEL_RESPONSE" | jq -r '.tunnel_port')
-echo -e "${GREEN}✓ (Port: $ALICE_DEV2_PORT)${NC}"
+ALICE_DEV2_PORT=$(register_tunnel_cli "alice-device-2-real" "Alice Device 2" | tail -1)
+if [ -z "$ALICE_DEV2_PORT" ] || ! [[ "$ALICE_DEV2_PORT" =~ ^[0-9]+$ ]]; then
+  echo -e "${RED}✗ Failed to register Alice Device 2 tunnel${NC}"
+  exit 1
+fi
 
 # Bob Device 1
-echo -n "  → Bob Device 1: "
-# Generate tunnel key in the location where roamie client expects it (~/.roamie/tunnel_key)
-# Use -m PEM to ensure compatibility with Go's ssh.ParsePrivateKey
-docker exec bob-device-1-real sh -c "mkdir -p /root/.roamie && ssh-keygen -t rsa -b 2048 -m PEM -f /root/.roamie/tunnel_key -N '' >/dev/null 2>&1"
-BOB_DEV1_PUBKEY=$(docker exec bob-device-1-real cat /root/.roamie/tunnel_key.pub)
+BOB_DEV1_PORT=$(register_tunnel_cli "bob-device-1-real" "Bob Device 1" | tail -1)
+if [ -z "$BOB_DEV1_PORT" ] || ! [[ "$BOB_DEV1_PORT" =~ ^[0-9]+$ ]]; then
+  echo -e "${RED}✗ Failed to register Bob Device 1 tunnel${NC}"
+  exit 1
+fi
 
-curl -s -X POST "$SERVER_URL/api/tunnel/register-key" \
-  -H "Authorization: Bearer $BOB_JWT" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$BOB_DEV1_ID\",\"public_key\":\"$BOB_DEV1_PUBKEY\"}" >/dev/null
-
-TUNNEL_RESPONSE=$(curl -s -X POST "$SERVER_URL/api/tunnel/register" \
-  -H "Authorization: Bearer $BOB_JWT" \
-  -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$BOB_DEV1_ID\"}")
-
-BOB_DEV1_PORT=$(echo "$TUNNEL_RESPONSE" | jq -r '.tunnel_port')
-echo -e "${GREEN}✓ (Port: $BOB_DEV1_PORT)${NC}"
+echo ""
+echo "  Allocated ports:"
+echo "    Alice Device 1: $ALICE_DEV1_PORT"
+echo "    Alice Device 2: $ALICE_DEV2_PORT"
+echo "    Bob Device 1: $BOB_DEV1_PORT"
 
 # NOTE: Tunnel authorized_keys are now managed automatically by roamie client
 # The client syncs keys via /api/tunnel/authorized-keys during tunnel connection
-echo -e "${YELLOW}→ Skipping manual authorized_keys configuration (handled by client)${NC}"
+echo -e "${YELLOW}→ Tunnels registered and enabled (handled by CLI)${NC}"
 
 echo -e "${GREEN}Phase 8: PASSED ✓${NC}"
 echo ""
@@ -618,21 +612,7 @@ echo ""
 echo -e "${BLUE}Phase 9: SSH Tunnel Connection${NC}"
 echo "================================================================"
 
-echo -e "${YELLOW}→ Enabling tunnels via API...${NC}"
-tunnel_enable_via_api "$ALICE_DEV1_ID" "$ALICE_JWT" "$SERVER_URL" || {
-  echo -e "${RED}✗ Failed to enable Alice Device 1 tunnel${NC}"
-  exit 1
-}
-
-tunnel_enable_via_api "$ALICE_DEV2_ID" "$ALICE_JWT" "$SERVER_URL" || {
-  echo -e "${RED}✗ Failed to enable Alice Device 2 tunnel${NC}"
-  exit 1
-}
-
-tunnel_enable_via_api "$BOB_DEV1_ID" "$BOB_JWT" "$SERVER_URL" || {
-  echo -e "${RED}✗ Failed to enable Bob Device 1 tunnel${NC}"
-  exit 1
-}
+# Note: Tunnels are already enabled by 'roamie tunnel register' in Phase 8
 
 echo -e "${YELLOW}→ Starting SSH reverse tunnels...${NC}"
 
@@ -831,8 +811,8 @@ echo "  ✓ Status checked using 'roamie status'"
 echo "  ✓ Same-account devices can communicate"
 echo "  ✓ Different-account devices CANNOT communicate"
 echo "  ✓ Disconnect works using 'roamie disconnect'"
-echo "  ✓ SSH tunnel registration and port allocation"
-echo "  ✓ SSH tunnel connection and forwarding"
+echo "  ✓ SSH tunnel registration via 'roamie tunnel register'"
+echo "  ✓ SSH tunnel connection via 'roamie tunnel start'"
 echo "  ✓ SSH tunnel isolation (cross-account blocked)"
 echo "  ✓ SSH tunnel auto-reconnect verified"
 echo "  ✓ Full client/server workflow verified"
