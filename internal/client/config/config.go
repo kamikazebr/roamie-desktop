@@ -45,6 +45,10 @@ type Config struct {
 	ServerPublicKey string `json:"server_public_key,omitempty"`
 	ServerEndpoint  string `json:"server_endpoint,omitempty"`
 	AllowedIPs      string `json:"allowed_ips,omitempty"`
+
+	// SSH Tunnel Configuration
+	TunnelEnabled bool `json:"tunnel_enabled"`
+	TunnelPort    int  `json:"tunnel_port,omitempty"`
 }
 
 // DefaultConfig returns a config with default values

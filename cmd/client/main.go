@@ -143,8 +143,18 @@ var tunnelCmd = &cobra.Command{
 
 var tunnelStartCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start SSH reverse tunnel",
-	Run:   runTunnelStart,
+	Short: "Start SSH reverse tunnel (for debug/manual use)",
+	Long: `Start SSH reverse tunnel manually.
+
+Note: For production use, the daemon manages the tunnel automatically.
+This command is for debugging or running without the daemon.
+
+The tunnel will be started automatically by the daemon when:
+  - You login with 'roamie auth login' (auto-registers tunnel)
+  - The daemon detects tunnel_enabled=true in config
+
+Use 'roamie tunnel disable' to stop the daemon-managed tunnel.`,
+	Run: runTunnelStart,
 }
 
 var tunnelStopCmd = &cobra.Command{
@@ -163,6 +173,30 @@ var tunnelRegisterCmd = &cobra.Command{
 	Use:   "register",
 	Short: "Register SSH key and allocate tunnel port",
 	Run:   runTunnelRegister,
+}
+
+var tunnelDisableCmd = &cobra.Command{
+	Use:   "disable",
+	Short: "Disable SSH tunnel (daemon will stop it within 10 seconds)",
+	Long: `Disable the SSH tunnel managed by the daemon.
+
+This sets tunnel_enabled=false in the config file.
+The daemon polls the config every 10 seconds and will stop the tunnel automatically.
+
+To re-enable the tunnel, run: roamie tunnel register`,
+	Run: runTunnelDisable,
+}
+
+var tunnelEnableCmd = &cobra.Command{
+	Use:   "enable",
+	Short: "Enable SSH tunnel (daemon will start it within 10 seconds)",
+	Long: `Enable the SSH tunnel managed by the daemon.
+
+This sets tunnel_enabled=true in the config file.
+The daemon polls the config every 10 seconds and will start the tunnel automatically.
+
+Note: You must have registered the tunnel first with 'roamie tunnel register'.`,
+	Run: runTunnelEnable,
 }
 
 var upgradeCmd = &cobra.Command{
@@ -208,7 +242,7 @@ func init() {
 	upgradeCmd.AddCommand(upgradeCheckCmd)
 	authCmd.AddCommand(loginCmd, daemonCmd, statusCmd, refreshCmd, logoutCmd)
 	sshCmd.AddCommand(sshSyncCmd, sshStatusCmd, sshEnableCmd, sshDisableCmd, sshSetIntervalCmd)
-	tunnelCmd.AddCommand(tunnelStartCmd, tunnelStopCmd, tunnelStatusCmd, tunnelRegisterCmd)
+	tunnelCmd.AddCommand(tunnelStartCmd, tunnelStopCmd, tunnelStatusCmd, tunnelRegisterCmd, tunnelDisableCmd, tunnelEnableCmd)
 	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd)
 }
 
@@ -704,18 +738,29 @@ func runTunnelRegister(cmd *cobra.Command, args []string) {
 	}
 	fmt.Printf("✓ Tunnel port allocated: %d\n", registerResp.TunnelPort)
 
-	// Enable tunnel
+	// Enable tunnel on server
 	fmt.Println("Enabling tunnel...")
 	if err := apiClient.EnableTunnel(cfg.DeviceID, cfg.JWT); err != nil {
 		fmt.Printf("Error: Failed to enable tunnel: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Println("✓ Tunnel enabled")
+	fmt.Println("✓ Tunnel enabled on server")
+
+	// Save tunnel config locally
+	cfg.TunnelEnabled = true
+	cfg.TunnelPort = registerResp.TunnelPort
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Warning: Failed to save tunnel config: %v\n", err)
+	} else {
+		fmt.Println("✓ Tunnel config saved")
+	}
 
 	fmt.Println("\n✅ SSH tunnel registered successfully!")
-	fmt.Println("\nNext steps:")
-	fmt.Println("  • Start tunnel: roamie tunnel start")
+	fmt.Println("\nThe daemon will start the tunnel automatically within 10 seconds.")
+	fmt.Println("\nUseful commands:")
 	fmt.Println("  • Check status: roamie tunnel status")
+	fmt.Println("  • Disable tunnel: roamie tunnel disable")
+	fmt.Println("  • Manual start (debug): roamie tunnel start")
 }
 
 func runTunnelStart(cmd *cobra.Command, args []string) {
@@ -777,9 +822,10 @@ func runTunnelStatus(cmd *cobra.Command, args []string) {
 
 	fmt.Println("SSH Tunnel Status")
 	fmt.Println("=================")
+	fmt.Printf("Local config: tunnel_enabled=%v, tunnel_port=%d\n", cfg.TunnelEnabled, cfg.TunnelPort)
 
 	if len(status.Tunnels) == 0 {
-		fmt.Println("\nNo tunnels registered.")
+		fmt.Println("\nNo tunnels registered on server.")
 		fmt.Println("Run: roamie tunnel register")
 		return
 	}
@@ -788,14 +834,16 @@ func runTunnelStatus(cmd *cobra.Command, args []string) {
 		if t.DeviceID == cfg.DeviceID {
 			fmt.Printf("\nDevice: %s\n", t.DeviceName)
 			fmt.Printf("Port: %d\n", t.Port)
-			fmt.Printf("Enabled: %v\n", t.Enabled)
+			fmt.Printf("Server enabled: %v\n", t.Enabled)
 			fmt.Printf("Connected: %v\n", t.Connected)
 
-			if t.Enabled {
-				fmt.Println("\n✓ Tunnel is enabled")
-				fmt.Println("\nTo connect: roamie tunnel start")
+			if cfg.TunnelEnabled && t.Enabled {
+				fmt.Println("\n✓ Tunnel is enabled (daemon will manage it)")
+			} else if !cfg.TunnelEnabled {
+				fmt.Println("\n⚠️  Tunnel is disabled in local config")
+				fmt.Println("Enable with: roamie tunnel enable")
 			} else {
-				fmt.Println("\n⚠️  Tunnel is disabled")
+				fmt.Println("\n⚠️  Tunnel is disabled on server")
 				fmt.Println("Enable with: roamie tunnel register")
 			}
 			return
@@ -804,6 +852,59 @@ func runTunnelStatus(cmd *cobra.Command, args []string) {
 
 	fmt.Println("\nTunnel not registered for this device.")
 	fmt.Println("Run: roamie tunnel register")
+}
+
+func runTunnelDisable(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated. Please run 'roamie auth login' first.")
+		os.Exit(1)
+	}
+
+	cfg.TunnelEnabled = false
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Error: Failed to save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✓ Tunnel disabled")
+	fmt.Println("\nThe daemon will stop the tunnel within 10 seconds.")
+	fmt.Println("To re-enable: roamie tunnel enable")
+}
+
+func runTunnelEnable(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not authenticated. Please run 'roamie auth login' first.")
+		os.Exit(1)
+	}
+
+	// Check if tunnel port is allocated
+	if cfg.TunnelPort == 0 {
+		fmt.Println("Error: Tunnel not registered. Please run 'roamie tunnel register' first.")
+		os.Exit(1)
+	}
+
+	cfg.TunnelEnabled = true
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Error: Failed to save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("✓ Tunnel enabled")
+	fmt.Printf("  Port: %d\n", cfg.TunnelPort)
+	fmt.Println("\nThe daemon will start the tunnel within 10 seconds.")
+	fmt.Println("To disable: roamie tunnel disable")
 }
 
 // Upgrade command implementations

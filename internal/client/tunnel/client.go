@@ -51,6 +51,12 @@ type Client struct {
 
 // NewClient creates a new SSH tunnel client
 func NewClient(cfg *config.Config) (*Client, error) {
+	return NewClientWithContext(context.Background(), cfg)
+}
+
+// NewClientWithContext creates a new SSH tunnel client with an external context
+// The tunnel will stop when the context is cancelled
+func NewClientWithContext(ctx context.Context, cfg *config.Config) (*Client, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is nil")
 	}
@@ -61,14 +67,15 @@ func NewClient(cfg *config.Config) (*Client, error) {
 		return nil, fmt.Errorf("failed to extract server host: %w", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	// Create a cancellable context derived from the provided context
+	tunnelCtx, cancel := context.WithCancel(ctx)
 
 	c := &Client{
 		serverURL:      cfg.ServerURL,
 		serverHost:     serverHost,
 		deviceID:       cfg.DeviceID,
 		jwt:            cfg.JWT,
-		ctx:            ctx,
+		ctx:            tunnelCtx,
 		cancel:         cancel,
 		reconnectDelay: InitialReconnectDelay,
 	}

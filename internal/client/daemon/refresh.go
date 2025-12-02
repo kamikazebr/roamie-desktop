@@ -9,6 +9,7 @@ import (
 	"github.com/kamikazebr/roamie-desktop/internal/client/api"
 	"github.com/kamikazebr/roamie-desktop/internal/client/config"
 	"github.com/kamikazebr/roamie-desktop/internal/client/ssh"
+	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
 )
 
 func Run(ctx context.Context) error {
@@ -21,6 +22,10 @@ func Run(ctx context.Context) error {
 	// Heartbeat ticker (fixed at 30 seconds)
 	heartbeatTicker := time.NewTicker(30 * time.Second)
 	defer heartbeatTicker.Stop()
+
+	// Config check ticker (every 10 seconds to detect tunnel enable/disable)
+	configTicker := time.NewTicker(10 * time.Second)
+	defer configTicker.Stop()
 
 	// Load config to get SSH sync interval
 	cfg, err := config.Load()
@@ -35,6 +40,20 @@ func Run(ctx context.Context) error {
 	}
 	sshTicker := time.NewTicker(sshInterval)
 	defer sshTicker.Stop()
+
+	// Tunnel state management
+	var tunnelClient *tunnel.Client
+	var tunnelCancel context.CancelFunc
+	tunnelEnabled := false
+
+	// Start tunnel if enabled in config
+	if cfg != nil && cfg.TunnelEnabled {
+		log.Println("Tunnel enabled in config, starting...")
+		tunnelClient, tunnelCancel = startTunnel(ctx, cfg)
+		if tunnelClient != nil {
+			tunnelEnabled = true
+		}
+	}
 
 	// Do initial checks immediately
 	if err := checkAndRefresh(); err != nil {
@@ -51,8 +70,54 @@ func Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			log.Println("Daemon stopping...")
+			// Stop tunnel if running
+			if tunnelCancel != nil {
+				tunnelCancel()
+			}
+			if tunnelClient != nil {
+				tunnelClient.Disconnect()
+			}
 			log.Println("Daemon stopped")
 			return nil
+
+		case <-configTicker.C:
+			// Check if tunnel config changed
+			newCfg, err := config.Load()
+			if err != nil {
+				log.Printf("Warning: failed to reload config: %v", err)
+				continue
+			}
+			if newCfg == nil {
+				continue
+			}
+
+			// Check if tunnel state changed
+			if newCfg.TunnelEnabled != tunnelEnabled {
+				if newCfg.TunnelEnabled {
+					// Start tunnel
+					log.Println("Tunnel enabled, starting...")
+					tunnelClient, tunnelCancel = startTunnel(ctx, newCfg)
+					if tunnelClient != nil {
+						tunnelEnabled = true
+					}
+				} else {
+					// Stop tunnel
+					log.Println("Tunnel disabled, stopping...")
+					if tunnelCancel != nil {
+						tunnelCancel()
+					}
+					if tunnelClient != nil {
+						tunnelClient.Disconnect()
+						tunnelClient = nil
+					}
+					tunnelCancel = nil
+					tunnelEnabled = false
+				}
+			}
+
+			// Update cfg reference for other operations
+			cfg = newCfg
 
 		case <-jwtTicker.C:
 			if err := checkAndRefresh(); err != nil {
@@ -213,4 +278,29 @@ func sendHeartbeat() error {
 	}
 
 	return nil
+}
+
+// startTunnel starts the SSH tunnel with the given config
+// Returns the tunnel client and a cancel function to stop it
+func startTunnel(ctx context.Context, cfg *config.Config) (*tunnel.Client, context.CancelFunc) {
+	// Create a cancellable context for the tunnel
+	tunnelCtx, cancel := context.WithCancel(ctx)
+
+	// Create tunnel client with the context
+	client, err := tunnel.NewClientWithContext(tunnelCtx, cfg)
+	if err != nil {
+		log.Printf("Failed to create tunnel client: %v", err)
+		cancel()
+		return nil, nil
+	}
+
+	// Start the tunnel connection in background
+	go func() {
+		if err := client.Connect(); err != nil {
+			log.Printf("Tunnel connection failed: %v", err)
+		}
+	}()
+
+	log.Printf("✓ Tunnel started (port %d)", cfg.TunnelPort)
+	return client, cancel
 }

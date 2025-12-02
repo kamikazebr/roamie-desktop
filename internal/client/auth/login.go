@@ -8,6 +8,7 @@ import (
 
 	"github.com/kamikazebr/roamie-desktop/internal/client/api"
 	"github.com/kamikazebr/roamie-desktop/internal/client/config"
+	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
 	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
 	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 	"github.com/google/uuid"
@@ -169,6 +170,21 @@ func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publ
 					fmt.Printf("  Device Name: %s\n", resp.Device.DeviceName)
 					fmt.Printf("  VPN IP: %s\n", resp.Device.VpnIP)
 
+					// Auto-register SSH tunnel
+					tunnelPort, err := autoRegisterTunnel(cfg)
+					if err != nil {
+						fmt.Printf("\n⚠️  Failed to register SSH tunnel: %v\n", err)
+						fmt.Println("You can manually register with: roamie tunnel register")
+					} else {
+						cfg.TunnelEnabled = true
+						cfg.TunnelPort = tunnelPort
+						if err := cfg.Save(); err != nil {
+							fmt.Printf("⚠️  Failed to save tunnel config: %v\n", err)
+						} else {
+							fmt.Printf("✓ SSH tunnel registered (port %d)\n", tunnelPort)
+						}
+					}
+
 					// Check if running as root (with sudo)
 					if os.Geteuid() == 0 {
 						// Auto-connect to VPN when running with sudo
@@ -257,4 +273,35 @@ func autoSetupDaemon() {
 		fmt.Printf("⚠️  Failed to setup daemon: %v\n", err)
 		fmt.Println("You can manually setup with: sudo roamie setup-daemon -y")
 	}
+}
+
+// autoRegisterTunnel registers the SSH tunnel key and allocates a port
+// Returns the allocated tunnel port on success
+func autoRegisterTunnel(cfg *config.Config) (int, error) {
+	fmt.Println("\n→ Registering SSH tunnel...")
+
+	// Create tunnel client to generate/load SSH key
+	tunnelClient, err := tunnel.NewClient(cfg)
+	if err != nil {
+		return 0, fmt.Errorf("failed to initialize tunnel client: %w", err)
+	}
+
+	// Register SSH key with server
+	if err := tunnelClient.RegisterKey(); err != nil {
+		return 0, fmt.Errorf("failed to register SSH key: %w", err)
+	}
+
+	// Allocate tunnel port
+	apiClient := api.NewClient(cfg.ServerURL)
+	registerResp, err := apiClient.RegisterTunnel(cfg.DeviceID, cfg.JWT)
+	if err != nil {
+		return 0, fmt.Errorf("failed to allocate tunnel port: %w", err)
+	}
+
+	// Enable tunnel on server
+	if err := apiClient.EnableTunnel(cfg.DeviceID, cfg.JWT); err != nil {
+		return 0, fmt.Errorf("failed to enable tunnel: %w", err)
+	}
+
+	return registerResp.TunnelPort, nil
 }
