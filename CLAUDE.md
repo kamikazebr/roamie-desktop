@@ -211,6 +211,7 @@ Required variables (see `.env.example`):
 - `SSH_TUNNEL_PORT` - SSH tunnel server port (default: 2222)
 - `TUNNEL_PORT_RANGE_START` - Start of tunnel port range (default: 10000)
 - `TUNNEL_PORT_RANGE_END` - End of tunnel port range (default: 20000)
+- `TUNNEL_SERVER_HOST` - (Optional) Override hostname for SSH tunnels. If not set, falls back to extracting host from `WG_SERVER_PUBLIC_ENDPOINT`. Only needed if SSH tunnel server is on a different host than WireGuard.
 
 ### Authentication Flows
 
