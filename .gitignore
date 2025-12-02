@@ -67,3 +67,4 @@ crash_reports/
 # Built binaries in root
 /roamie
 /roamie-server
+.claude/settings.local.json
