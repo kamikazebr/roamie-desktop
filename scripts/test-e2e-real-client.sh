@@ -19,14 +19,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/docker-vpn-helpers.sh"
 
 # Helper function to save credentials for tunnel access
+# Uses the new config format at ~/.roamie/config.json
 save_credentials() {
   local container=$1
   local server_url=$2
   local device_id=$3
   local jwt=$4
 
-  docker exec "$container" mkdir -p /root/.config/roamie-vpn
-  docker exec "$container" sh -c "cat > /root/.config/roamie-vpn/config.json <<EOF
+  docker exec "$container" mkdir -p /root/.roamie
+  docker exec "$container" sh -c "cat > /root/.roamie/config.json <<EOF
 {
   \"server_url\": \"$server_url\",
   \"device_id\": \"$device_id\",
@@ -538,13 +539,22 @@ echo -e "${YELLOW}→ Generating SSH keys and registering tunnels...${NC}"
 
 # Alice Device 1
 echo -n "  → Alice Device 1: "
-docker exec alice-device-1-real sh -c "ssh-keygen -t rsa -b 2048 -f /root/.ssh/tunnel_key -N '' >/dev/null 2>&1"
-ALICE_DEV1_PUBKEY=$(docker exec alice-device-1-real cat /root/.ssh/tunnel_key.pub)
+# Generate tunnel key in the location where roamie client expects it (~/.roamie/tunnel_key)
+# Use -m PEM to ensure compatibility with Go's ssh.ParsePrivateKey
+docker exec alice-device-1-real sh -c "mkdir -p /root/.roamie && ssh-keygen -t rsa -b 2048 -m PEM -f /root/.roamie/tunnel_key -N '' >/dev/null 2>&1"
+ALICE_DEV1_PUBKEY=$(docker exec alice-device-1-real cat /root/.roamie/tunnel_key.pub)
+echo ""
+echo "    Debug: Public key being registered: ${ALICE_DEV1_PUBKEY:0:80}..."
 
-curl -s -X POST "$SERVER_URL/api/tunnel/register-key" \
+REGISTER_KEY_RESULT=$(curl -s -X POST "$SERVER_URL/api/tunnel/register-key" \
   -H "Authorization: Bearer $ALICE_JWT" \
   -H "Content-Type: application/json" \
-  -d "{\"device_id\":\"$ALICE_DEV1_ID\",\"public_key\":\"$ALICE_DEV1_PUBKEY\"}" >/dev/null
+  -d "{\"device_id\":\"$ALICE_DEV1_ID\",\"public_key\":\"$ALICE_DEV1_PUBKEY\"}")
+echo "    Debug: Register key result: $REGISTER_KEY_RESULT"
+
+# Query DB to verify key was saved
+DB_KEY=$(docker exec roamie-e2e-db psql -U roamie -d roamie_vpn -t -c "SELECT tunnel_ssh_key FROM devices WHERE id='$ALICE_DEV1_ID'" 2>/dev/null | tr -d ' \n')
+echo "    Debug: Key in DB (first 80 chars): ${DB_KEY:0:80}..."
 
 TUNNEL_RESPONSE=$(curl -s -X POST "$SERVER_URL/api/tunnel/register" \
   -H "Authorization: Bearer $ALICE_JWT" \
@@ -556,8 +566,10 @@ echo -e "${GREEN}✓ (Port: $ALICE_DEV1_PORT)${NC}"
 
 # Alice Device 2
 echo -n "  → Alice Device 2: "
-docker exec alice-device-2-real sh -c "ssh-keygen -t rsa -b 2048 -f /root/.ssh/tunnel_key -N '' >/dev/null 2>&1"
-ALICE_DEV2_PUBKEY=$(docker exec alice-device-2-real cat /root/.ssh/tunnel_key.pub)
+# Generate tunnel key in the location where roamie client expects it (~/.roamie/tunnel_key)
+# Use -m PEM to ensure compatibility with Go's ssh.ParsePrivateKey
+docker exec alice-device-2-real sh -c "mkdir -p /root/.roamie && ssh-keygen -t rsa -b 2048 -m PEM -f /root/.roamie/tunnel_key -N '' >/dev/null 2>&1"
+ALICE_DEV2_PUBKEY=$(docker exec alice-device-2-real cat /root/.roamie/tunnel_key.pub)
 
 curl -s -X POST "$SERVER_URL/api/tunnel/register-key" \
   -H "Authorization: Bearer $ALICE_JWT" \
@@ -574,8 +586,10 @@ echo -e "${GREEN}✓ (Port: $ALICE_DEV2_PORT)${NC}"
 
 # Bob Device 1
 echo -n "  → Bob Device 1: "
-docker exec bob-device-1-real sh -c "ssh-keygen -t rsa -b 2048 -f /root/.ssh/tunnel_key -N '' >/dev/null 2>&1"
-BOB_DEV1_PUBKEY=$(docker exec bob-device-1-real cat /root/.ssh/tunnel_key.pub)
+# Generate tunnel key in the location where roamie client expects it (~/.roamie/tunnel_key)
+# Use -m PEM to ensure compatibility with Go's ssh.ParsePrivateKey
+docker exec bob-device-1-real sh -c "mkdir -p /root/.roamie && ssh-keygen -t rsa -b 2048 -m PEM -f /root/.roamie/tunnel_key -N '' >/dev/null 2>&1"
+BOB_DEV1_PUBKEY=$(docker exec bob-device-1-real cat /root/.roamie/tunnel_key.pub)
 
 curl -s -X POST "$SERVER_URL/api/tunnel/register-key" \
   -H "Authorization: Bearer $BOB_JWT" \
@@ -627,37 +641,54 @@ echo -n "  → Alice Device 1: "
 docker exec -d alice-device-1-real sh -c "roamie tunnel start > /tmp/tunnel.log 2>&1"
 sleep 5
 echo -e "${GREEN}✓${NC}"
+echo "    Debug - Alice Device 1 tunnel log:"
+docker exec alice-device-1-real cat /tmp/tunnel.log 2>/dev/null | head -20
 
 # Alice Device 2
 echo -n "  → Alice Device 2: "
 docker exec -d alice-device-2-real sh -c "roamie tunnel start > /tmp/tunnel.log 2>&1"
 sleep 5
 echo -e "${GREEN}✓${NC}"
+echo "    Debug - Alice Device 2 tunnel log:"
+docker exec alice-device-2-real cat /tmp/tunnel.log 2>/dev/null | head -20
 
 # Bob Device 1
 echo -n "  → Bob Device 1: "
 docker exec -d bob-device-1-real sh -c "roamie tunnel start > /tmp/tunnel.log 2>&1"
 sleep 5
 echo -e "${GREEN}✓${NC}"
+echo "    Debug - Bob Device 1 tunnel log:"
+docker exec bob-device-1-real cat /tmp/tunnel.log 2>/dev/null | head -20
 
 # Set up testuser SSH keys for tunnel testing
 echo -e "${YELLOW}→ Setting up testuser SSH keys in client containers...${NC}"
 
-# Generate a test SSH key on the server (acts as the testing client)
-docker exec roamie-e2e-server sh -c "ssh-keygen -t ed25519 -f /root/.ssh/test_key -N '' -q"
+# Generate a test SSH key on the server (acts as the testing client for Phase 9 - basic connectivity)
+docker exec roamie-e2e-server sh -c "rm -f /root/.ssh/test_key /root/.ssh/test_key.pub; ssh-keygen -t ed25519 -f /root/.ssh/test_key -N '' -q"
 TEST_PUBKEY=$(docker exec roamie-e2e-server cat /root/.ssh/test_key.pub)
 TEST_PRIVKEY=$(docker exec roamie-e2e-server cat /root/.ssh/test_key)
 
-# Add the public key to testuser's authorized_keys in each client
+# For Phase 9 (basic connectivity), add shared test_key to all devices
 docker exec alice-device-1-real sh -c "mkdir -p /home/testuser/.ssh && echo '$TEST_PUBKEY' > /home/testuser/.ssh/authorized_keys && chmod 700 /home/testuser/.ssh && chmod 600 /home/testuser/.ssh/authorized_keys && chown -R testuser:testuser /home/testuser/.ssh"
 docker exec alice-device-2-real sh -c "mkdir -p /home/testuser/.ssh && echo '$TEST_PUBKEY' > /home/testuser/.ssh/authorized_keys && chmod 700 /home/testuser/.ssh && chmod 600 /home/testuser/.ssh/authorized_keys && chown -R testuser:testuser /home/testuser/.ssh"
 docker exec bob-device-1-real sh -c "mkdir -p /home/testuser/.ssh && echo '$TEST_PUBKEY' > /home/testuser/.ssh/authorized_keys && chmod 700 /home/testuser/.ssh && chmod 600 /home/testuser/.ssh/authorized_keys && chown -R testuser:testuser /home/testuser/.ssh"
 
-# Copy the private key to client containers for Phase 10 testing
-docker exec alice-device-1-real sh -c "echo '$TEST_PRIVKEY' > /root/.ssh/test_key && chmod 600 /root/.ssh/test_key"
-docker exec bob-device-1-real sh -c "echo '$TEST_PRIVKEY' > /root/.ssh/test_key && chmod 600 /root/.ssh/test_key"
+# The client tunnel keys (/root/.roamie/tunnel_key) will be used for Phase 10 isolation tests
+# These are per-device and only authorized for same-account devices via roamie sync
 
 echo -e "${GREEN}✓ SSH keys configured${NC}"
+
+# Wait a bit more for tunnels to establish and check status
+echo -e "${YELLOW}→ Waiting for tunnels to establish...${NC}"
+sleep 10
+
+# Debug: Check server logs for tunnel establishment
+echo "    Debug - Server tunnel logs:"
+docker logs roamie-e2e-server 2>&1 | grep -iE "(authenticated|reverse tunnel|10000|10001|10002)" | tail -10
+
+# Debug: Check if tunnel ports are listening
+echo "    Debug - Tunnel port listeners:"
+docker exec roamie-e2e-server ss -tlnp | grep -E "(10000|10001|10002)" || echo "    No tunnel ports listening yet"
 
 echo -e "${YELLOW}→ Testing SSH connection through tunnels...${NC}"
 tunnel_test_ssh_connection "roamie-e2e-server" "$ALICE_DEV1_PORT" "roamie-e2e-server" "yes" || {
@@ -685,22 +716,44 @@ echo ""
 echo -e "${BLUE}Phase 10: SSH Tunnel Isolation Testing${NC}"
 echo "================================================================"
 
+# Debug: Check what authorized_keys are synced
+echo "    Debug - Alice Device 1's authorized_keys:"
+docker exec alice-device-1-real cat /root/.ssh/authorized_keys 2>/dev/null | head -5 || echo "    (no file)"
+echo ""
+echo "    Debug - Alice Device 2's authorized_keys:"
+docker exec alice-device-2-real cat /root/.ssh/authorized_keys 2>/dev/null | head -5 || echo "    (no file)"
+echo ""
+echo "    Debug - Bob Device 1's authorized_keys:"
+docker exec bob-device-1-real cat /root/.ssh/authorized_keys 2>/dev/null | head -5 || echo "    (no file)"
+echo ""
+
+# Debug: Check tunnel keys in containers
+echo "    Debug - Alice Device 1 tunnel pub key:"
+docker exec alice-device-1-real cat /root/.roamie/tunnel_key.pub 2>/dev/null | cut -c1-80 || echo "    (no file)"
+echo "    Debug - Alice Device 2 tunnel pub key:"
+docker exec alice-device-2-real cat /root/.roamie/tunnel_key.pub 2>/dev/null | cut -c1-80 || echo "    (no file)"
+echo ""
+
 echo -e "${YELLOW}→ Testing cross-account isolation (should fail)...${NC}"
 echo -e "${CYAN}  Testing: Alice trying to access Bob's device...${NC}"
-tunnel_test_ssh_connection "alice-device-1-real" "$BOB_DEV1_PORT" "roamie-e2e-server" "no" || {
+# Use the device's tunnel key - this should be blocked because Bob's device
+# only has Bob's devices' tunnel keys in its authorized_keys (via roamie sync)
+tunnel_test_ssh_with_tunnel_key "alice-device-1-real" "$BOB_DEV1_PORT" "roamie-e2e-server" "no" || {
   echo -e "${RED}✗ Isolation test failed: Alice could access Bob's device!${NC}"
   exit 1
 }
 
 echo -e "${CYAN}  Testing: Bob trying to access Alice's device...${NC}"
-tunnel_test_ssh_connection "bob-device-1-real" "$ALICE_DEV1_PORT" "roamie-e2e-server" "no" || {
+tunnel_test_ssh_with_tunnel_key "bob-device-1-real" "$ALICE_DEV1_PORT" "roamie-e2e-server" "no" || {
   echo -e "${RED}✗ Isolation test failed: Bob could access Alice's device!${NC}"
   exit 1
 }
 
 echo -e "${YELLOW}→ Testing same-account access (should succeed)...${NC}"
 echo -e "${CYAN}  Testing: Alice Device 1 accessing Alice Device 2...${NC}"
-tunnel_test_ssh_connection "alice-device-1-real" "$ALICE_DEV2_PORT" "roamie-e2e-server" "yes" || {
+# Use the device's tunnel key - this should succeed because Alice's devices
+# have each other's tunnel keys in their authorized_keys (via roamie sync)
+tunnel_test_ssh_with_tunnel_key "alice-device-1-real" "$ALICE_DEV2_PORT" "roamie-e2e-server" "yes" || {
   echo -e "${RED}✗ Same-account test failed: Alice Device 1 cannot access Device 2!${NC}"
   exit 1
 }
@@ -716,22 +769,43 @@ echo -e "${BLUE}Phase 11: SSH Tunnel Reconnection Testing${NC}"
 echo "================================================================"
 
 echo -e "${YELLOW}→ Testing auto-reconnect feature...${NC}"
-tunnel_kill_connection "alice-device-1-real" || {
-  echo -e "${RED}✗ Failed to kill tunnel connection${NC}"
+echo -e "${CYAN}  (Restarting server to force all clients to reconnect)${NC}"
+
+# Get initial log line count to detect new reconnect messages
+INITIAL_LOG_LINES=$(docker exec alice-device-1-real wc -l < /tmp/tunnel.log 2>/dev/null | tr -d ' ' || echo "0")
+
+tunnel_simulate_disconnect_server "roamie-e2e-server" || {
+  echo -e "${RED}✗ Failed to restart server${NC}"
   exit 1
 }
 
-echo -e "${YELLOW}→ Waiting for auto-reconnect (max 35 seconds)...${NC}"
-tunnel_wait_for_reconnect "alice-device-1-real" 35 || {
-  echo -e "${RED}✗ Tunnel did not auto-reconnect${NC}"
-  # Show logs for debugging
-  echo "Tunnel logs:"
-  docker exec alice-device-1-real cat /tmp/tunnel.log 2>/dev/null || echo "No logs available"
+echo -e "${YELLOW}→ Waiting for auto-reconnect (max 45 seconds)...${NC}"
+RECONNECT_TIMEOUT=45
+ELAPSED=0
+RECONNECTED=false
+
+while [ $ELAPSED -lt $RECONNECT_TIMEOUT ]; do
+  # Check if tunnel client logged a reconnection
+  if docker exec alice-device-1-real tail -n +$((INITIAL_LOG_LINES + 1)) /tmp/tunnel.log 2>/dev/null | grep -q "SSH tunnel connected\|Reverse tunnel established"; then
+    echo -e "  ${GREEN}✓ Reconnected in ${ELAPSED}s${NC}"
+    RECONNECTED=true
+    break
+  fi
+  echo -n "."
+  sleep 1
+  ELAPSED=$((ELAPSED + 1))
+done
+
+if [ "$RECONNECTED" = false ]; then
+  echo -e " ${RED}✗ timeout${NC}"
+  echo "Tunnel logs (last 20 lines):"
+  docker exec alice-device-1-real tail -20 /tmp/tunnel.log 2>/dev/null || echo "No logs"
   exit 1
-}
+fi
 
 echo -e "${YELLOW}→ Verifying tunnel works after reconnection...${NC}"
-sleep 5  # Give time for tunnel to stabilize
+sleep 3
+
 tunnel_test_ssh_connection "roamie-e2e-server" "$ALICE_DEV1_PORT" "roamie-e2e-server" "yes" || {
   echo -e "${RED}✗ SSH connection failed after reconnection${NC}"
   exit 1

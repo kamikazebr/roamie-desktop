@@ -378,7 +378,9 @@ func (c *Client) RegisterTunnelKey(deviceID, publicKey, jwt string) error {
 type TunnelInfo struct {
 	DeviceID   string `json:"device_id"`
 	DeviceName string `json:"device_name"`
-	Port       int    `json:"port"`
+	Port       int    `json:"tunnel_port"`
+	VpnIP      string `json:"vpn_ip"`
+	LastSeen   string `json:"last_seen"`
 	Enabled    bool   `json:"enabled"`
 	Connected  bool   `json:"connected"`
 }
@@ -409,6 +411,51 @@ func (c *Client) GetTunnelStatus(jwt string) (*TunnelStatusResponse, error) {
 	}
 
 	var result TunnelStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// TunnelRegisterResponse contains the response from tunnel registration
+type TunnelRegisterResponse struct {
+	TunnelPort int    `json:"tunnel_port"`
+	ServerHost string `json:"server_host"`
+	Message    string `json:"message"`
+}
+
+// RegisterTunnel allocates a tunnel port for a device
+func (c *Client) RegisterTunnel(deviceID, jwt string) (*TunnelRegisterResponse, error) {
+	reqBody := map[string]string{
+		"device_id": deviceID,
+	}
+
+	body, err := json.Marshal(reqBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/api/tunnel/register", bytes.NewBuffer(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+jwt)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result TunnelRegisterResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}

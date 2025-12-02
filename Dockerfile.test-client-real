@@ -37,7 +37,8 @@ RUN apk add --no-cache \
     autossh
 
 # Create directories
-RUN mkdir -p /etc/wireguard /root/.config/roamie-vpn
+RUN mkdir -p /etc/wireguard /root/.config/roamie-vpn /root/.ssh /root/.roamie && \
+    chmod 700 /root/.ssh
 
 # Configure SSH server
 RUN ssh-keygen -A && \
@@ -49,7 +50,10 @@ RUN ssh-keygen -A && \
     chown -R testuser:testuser /home/testuser/.ssh
 
 # Configure SSH daemon
-RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config && \
+# Note: We enable PermitRootLogin with publickey only (prohibit-password) for tunnel access
+# The roamie client syncs tunnel keys to /root/.ssh/authorized_keys
+RUN sed -i 's/#PermitRootLogin.*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
+    sed -i 's/PermitRootLogin no/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config && \
     sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
     sed -i 's/#PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config && \
     sed -i 's/#Port 22/Port 22/' /etc/ssh/sshd_config

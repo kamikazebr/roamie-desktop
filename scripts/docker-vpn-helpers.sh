@@ -342,6 +342,49 @@ tunnel_test_ssh_connection() {
   fi
 }
 
+# Test SSH connection through tunnel using the device's own tunnel key
+# This tests the proper tunnel authorization where each device's tunnel key
+# is only authorized for same-account devices via roamie's authorized_keys sync
+tunnel_test_ssh_with_tunnel_key() {
+  local from_container=$1
+  local tunnel_port=$2
+  local server=$3
+  local expect_success=$4  # "yes" or "no"
+
+  echo -n "  → Testing SSH through tunnel (port $tunnel_port) with device's tunnel key"
+
+  # Try to SSH through tunnel using the device's own tunnel key
+  # The tunnel key is at /root/.roamie/tunnel_key, and we SSH as root
+  # because roamie syncs authorized_keys to /root/.ssh/authorized_keys
+  local output=$(docker exec "$from_container" sh -c "timeout 5 \
+    /usr/bin/ssh -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        -o ConnectTimeout=3 \
+        -i /root/.roamie/tunnel_key \
+        -p $tunnel_port \
+        root@$server \
+        \"echo 'tunnel_test_success'\"" 2>&1)
+
+  if [ "$expect_success" = "yes" ]; then
+    if echo "$output" | grep -q "tunnel_test_success"; then
+      echo -e " ${GREEN}✓ Connected${NC}"
+      return 0
+    else
+      echo -e " ${RED}✗ Failed to connect${NC}"
+      echo "Output: $output"
+      return 1
+    fi
+  else
+    if echo "$output" | grep -q "tunnel_test_success"; then
+      echo -e " ${RED}✗ Should have been blocked but connected${NC}"
+      return 1
+    else
+      echo -e " ${GREEN}✓ Correctly blocked${NC}"
+      return 0
+    fi
+  fi
+}
+
 tunnel_kill_connection() {
   local container=$1
 
@@ -359,6 +402,64 @@ tunnel_kill_connection() {
     echo -e " ${RED}✗ Process still running${NC}"
     return 1
   fi
+}
+
+# Simulate disconnect by restarting the tunnel server
+# This forces all client connections to drop and reconnect
+tunnel_simulate_disconnect_server() {
+  local server_container=$1
+
+  echo -n "  → Restarting tunnel server to force disconnection"
+
+  # Kill only the roamie-server process, not the container
+  docker exec "$server_container" pkill -f "roamie-server" 2>/dev/null || true
+
+  # Wait for process to die
+  sleep 2
+
+  # Restart roamie-server in background
+  docker exec -d "$server_container" sh -c "./roamie-server > /tmp/server.log 2>&1"
+
+  # Wait for server to be ready
+  sleep 3
+
+  echo -e " ${GREEN}✓${NC}"
+  return 0
+}
+
+# Wait for tunnel to reconnect after disconnect (checks log for reconnect message)
+tunnel_wait_for_reconnect_log() {
+  local container=$1
+  local max_wait=$2
+  local elapsed=0
+  local initial_log_lines
+
+  echo -n "  → Waiting for tunnel auto-reconnect in $container"
+
+  # Get initial log line count
+  initial_log_lines=$(docker exec "$container" wc -l < /tmp/tunnel.log 2>/dev/null | tr -d ' ')
+
+  while [ $elapsed -lt $max_wait ]; do
+    # Check if process is still running
+    if ! docker exec "$container" pgrep -f "roamie tunnel start" > /dev/null 2>&1; then
+      echo -n "!"  # Process died
+      sleep 1
+      elapsed=$((elapsed + 1))
+      continue
+    fi
+
+    # Check for reconnect message in log (after initial lines)
+    if docker exec "$container" tail -n +$((initial_log_lines + 1)) /tmp/tunnel.log 2>/dev/null | grep -q "SSH tunnel connected\|Reverse tunnel established"; then
+      echo -e " ${GREEN}✓ Reconnected in ${elapsed}s${NC}"
+      return 0
+    fi
+    echo -n "."
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  echo -e " ${RED}✗ timeout${NC}"
+  return 1
 }
 
 tunnel_wait_for_reconnect() {

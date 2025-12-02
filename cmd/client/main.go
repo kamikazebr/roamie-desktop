@@ -697,11 +697,20 @@ func runTunnelRegister(cmd *cobra.Command, args []string) {
 	// Allocate tunnel port
 	fmt.Println("Allocating tunnel port...")
 	apiClient := api.NewClient(cfg.ServerURL)
-	_, err = apiClient.GetTunnelStatus(cfg.JWT)
+	registerResp, err := apiClient.RegisterTunnel(cfg.DeviceID, cfg.JWT)
 	if err != nil {
-		fmt.Printf("Error: Failed to get tunnel status: %v\n", err)
+		fmt.Printf("Error: Failed to allocate tunnel port: %v\n", err)
 		os.Exit(1)
 	}
+	fmt.Printf("✓ Tunnel port allocated: %d\n", registerResp.TunnelPort)
+
+	// Enable tunnel
+	fmt.Println("Enabling tunnel...")
+	if err := apiClient.EnableTunnel(cfg.DeviceID, cfg.JWT); err != nil {
+		fmt.Printf("Error: Failed to enable tunnel: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✓ Tunnel enabled")
 
 	fmt.Println("\n✅ SSH tunnel registered successfully!")
 	fmt.Println("\nNext steps:")
@@ -787,7 +796,7 @@ func runTunnelStatus(cmd *cobra.Command, args []string) {
 				fmt.Println("\nTo connect: roamie tunnel start")
 			} else {
 				fmt.Println("\n⚠️  Tunnel is disabled")
-				fmt.Println("Enable it from the Flutter app")
+				fmt.Println("Enable with: roamie tunnel register")
 			}
 			return
 		}

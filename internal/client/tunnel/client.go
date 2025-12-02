@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -252,25 +253,31 @@ func (c *Client) establishConnection() error {
 	addr := fmt.Sprintf("%s:%d", c.serverHost, TunnelServerPort)
 	log.Printf("Connecting to SSH tunnel server: %s", addr)
 
+	log.Printf("DEBUG: About to dial SSH...")
 	sshClient, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
+		log.Printf("DEBUG: SSH dial failed: %v", err)
 		return fmt.Errorf("SSH dial failed: %w", err)
 	}
 	defer sshClient.Close()
+	log.Printf("DEBUG: SSH dial succeeded")
 
 	c.mu.Lock()
 	c.sshClient = sshClient
-	c.setConnected(true)
+	c.connected = true // Set directly to avoid deadlock (setConnected also locks)
 	c.mu.Unlock()
 
 	log.Printf("✓ SSH tunnel connected")
 
 	// Setup reverse port forward
+	log.Printf("DEBUG: About to setup reverse port forward on port %d...", c.tunnelPort)
 	listener, err := sshClient.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", c.tunnelPort))
 	if err != nil {
+		log.Printf("DEBUG: Listen failed: %v", err)
 		return fmt.Errorf("failed to setup reverse tunnel: %w", err)
 	}
 	defer listener.Close()
+	log.Printf("DEBUG: Listener created successfully")
 
 	log.Printf("✓ Reverse tunnel established: server port %d → localhost:%d", c.tunnelPort, LocalSSHPort)
 
@@ -402,7 +409,7 @@ func (c *Client) GetStatus() map[string]interface{} {
 	}
 }
 
-// extractHost extracts the host from a URL (removes http:// or https://)
+// extractHost extracts the hostname from a URL (removes http://, https://, port, and path)
 func extractHost(url string) (string, error) {
 	// Simple extraction - remove protocol prefix
 	host := url
@@ -412,23 +419,14 @@ func extractHost(url string) (string, error) {
 		host = url[7:]
 	}
 
-	// Remove port if present in URL
-	if colonIdx := len(host) - 1; colonIdx > 0 {
-		for i := len(host) - 1; i >= 0; i-- {
-			if host[i] == ':' {
-				// Keep the port - it's part of the host
-				break
-			}
-			if host[i] == '/' {
-				host = host[:i]
-				break
-			}
-		}
+	// Remove path if present
+	if slashIdx := strings.Index(host, "/"); slashIdx >= 0 {
+		host = host[:slashIdx]
 	}
 
-	// Remove trailing slash
-	if len(host) > 0 && host[len(host)-1] == '/' {
-		host = host[:len(host)-1]
+	// Remove port if present (we use TunnelServerPort instead)
+	if colonIdx := strings.Index(host, ":"); colonIdx >= 0 {
+		host = host[:colonIdx]
 	}
 
 	if host == "" {

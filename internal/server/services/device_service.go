@@ -64,34 +64,49 @@ func (s *DeviceService) RegisterDevice(ctx context.Context, userID uuid.UUID, de
 		return nil, fmt.Errorf("failed to check existing device: %w", err)
 	}
 
-	// BYPASS: If device exists with same public key, return it (idempotent)
+	// BYPASS: If device exists with same public key, check if IP needs reallocation
+	var replacingDevice *models.Device
 	if existing != nil && existing.PublicKey == publicKey {
-		return &DeviceRegistrationResult{
-			Device:         existing,
-			ReplacedDevice: nil,
-			WasReplaced:    false,
-		}, nil
+		// Check if device IP is within user's subnet
+		if IsIPInSubnet(existing.VpnIP, user.Subnet) {
+			return &DeviceRegistrationResult{
+				Device:         existing,
+				ReplacedDevice: nil,
+				WasReplaced:    false,
+			}, nil
+		}
+		// IP is outside user's subnet - need to reallocate
+		log.Printf("Device %s has IP %s outside user subnet %s, reallocating...",
+			existing.DeviceName, existing.VpnIP, user.Subnet)
+		replacingDevice = existing
 	}
 
-	// BYPASS: If device exists with same hardware_id for this user, return it (idempotent)
-	if hardwareID != nil && *hardwareID != "" {
+	// BYPASS: If device exists with same hardware_id for this user, check if IP needs reallocation
+	if hardwareID != nil && *hardwareID != "" && replacingDevice == nil {
 		devices, err := s.deviceRepo.GetByUserID(ctx, userID)
 		if err == nil {
 			for _, dev := range devices {
 				if dev.HardwareID == *hardwareID && dev.PublicKey == publicKey {
-					return &DeviceRegistrationResult{
-						Device:         &dev,
-						ReplacedDevice: nil,
-						WasReplaced:    false,
-					}, nil
+					// Check if device IP is within user's subnet
+					if IsIPInSubnet(dev.VpnIP, user.Subnet) {
+						return &DeviceRegistrationResult{
+							Device:         &dev,
+							ReplacedDevice: nil,
+							WasReplaced:    false,
+						}, nil
+					}
+					// IP is outside user's subnet - need to reallocate
+					log.Printf("Device %s has IP %s outside user subnet %s, reallocating...",
+						dev.DeviceName, dev.VpnIP, user.Subnet)
+					replacingDevice = &dev
+					break
 				}
 			}
 		}
 	}
 
 	// REPLACE: If device exists with different public key, mark for replacement
-	var replacingDevice *models.Device
-	if existing != nil && existing.PublicKey != publicKey {
+	if existing != nil && existing.PublicKey != publicKey && replacingDevice == nil {
 		replacingDevice = existing
 	}
 

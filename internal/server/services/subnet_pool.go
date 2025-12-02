@@ -207,3 +207,16 @@ func contains(slice []string, item string) bool {
 func subnetsOverlap(a, b *net.IPNet) bool {
 	return a.Contains(b.IP) || b.Contains(a.IP)
 }
+
+// IsIPInSubnet checks if an IP address is within a given subnet
+func IsIPInSubnet(ip string, subnet string) bool {
+	parsedIP := net.ParseIP(ip)
+	if parsedIP == nil {
+		return false
+	}
+	_, subnetNet, err := net.ParseCIDR(subnet)
+	if err != nil {
+		return false
+	}
+	return subnetNet.Contains(parsedIP)
+}

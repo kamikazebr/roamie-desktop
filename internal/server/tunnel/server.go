@@ -238,6 +238,9 @@ func (s *Server) authenticateClient(conn ssh.ConnMetadata, key ssh.PublicKey) (*
 	// Get authorized key in SSH format and trim whitespace for comparison
 	authorizedKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
 
+	// Debug: log what key we're looking for
+	log.Printf("DEBUG: Authenticating with key (first 80 chars): %.80s...", authorizedKey)
+
 	// Look up device by SSH public key
 	device, err := s.deviceRepo.GetByTunnelSSHKey(s.ctx, authorizedKey)
 	if err != nil {
@@ -246,7 +249,7 @@ func (s *Server) authenticateClient(conn ssh.ConnMetadata, key ssh.PublicKey) (*
 	}
 
 	if device == nil {
-		log.Printf("Rejected connection: SSH key not found in database")
+		log.Printf("Rejected connection: SSH key not found in database (key: %.100s...)", authorizedKey)
 		return nil, fmt.Errorf("public key not authorized")
 	}
 
@@ -367,7 +370,9 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 	}()
 
 	// Handle global requests (tcpip-forward)
+	log.Printf("DEBUG: Waiting for global requests from device %s...", deviceIDStr)
 	for req := range reqs {
+		log.Printf("DEBUG: Received global request type=%s wantReply=%v from device %s", req.Type, req.WantReply, deviceIDStr)
 		switch req.Type {
 		case "tcpip-forward":
 			// Parse the forward request
@@ -472,30 +477,49 @@ func (s *Server) forwardTunnelConnection(tcpConn net.Conn, sshConn *ssh.ServerCo
 	remoteAddr := tcpConn.RemoteAddr().String()
 	log.Printf("Incoming connection to tunnel port %d from %s", tunnelPort, remoteAddr)
 
+	// Parse originator address and port
+	originHost, originPortStr, err := net.SplitHostPort(remoteAddr)
+	if err != nil {
+		log.Printf("Failed to parse remote address %s: %v", remoteAddr, err)
+		originHost = remoteAddr
+		originPortStr = "0"
+	}
+	var originPort uint32
+	if p, err := fmt.Sscanf(originPortStr, "%d", &originPort); err != nil || p != 1 {
+		originPort = 0
+	}
+
 	// For now, we allow all connections to the tunnel port and rely on
 	// the final SSH authentication at the target device.
 	// In a future enhancement, we could add IP-based or certificate-based auth here.
 
 	// Create a forwarded-tcpip channel to the target device
 	// This goes through the device's existing SSH connection
+	// IMPORTANT: The Address/Port fields must match what the client requested in tcpip-forward!
+	// Go's SSH library uses these fields to match the channel to the correct listener.
+	// The Address should be the bind address from tcpip-forward (e.g., "0.0.0.0")
+	// The Port should be the tunnel port (e.g., 10000)
 	payload := struct {
 		Address           string
 		Port              uint32
 		OriginatorAddress string
 		OriginatorPort    uint32
 	}{
-		Address:           "127.0.0.1",
-		Port:              22, // Forward to device's local SSH server
-		OriginatorAddress: remoteAddr,
-		OriginatorPort:    0,
+		Address:           "0.0.0.0",
+		Port:              uint32(tunnelPort), // Must match what client requested!
+		OriginatorAddress: originHost,
+		OriginatorPort:    originPort,
 	}
 
+	log.Printf("DEBUG: Opening forwarded-tcpip channel to device %s (dest: %s:%d, origin: %s)",
+		targetDeviceID, payload.Address, payload.Port, payload.OriginatorAddress)
 	channel, requests, err := sshConn.OpenChannel("forwarded-tcpip", ssh.Marshal(&payload))
 	if err != nil {
 		log.Printf("Failed to open forwarded channel to device %s: %v", targetDeviceID, err)
 		return
 	}
 	defer channel.Close()
+	log.Printf("DEBUG: Channel opened successfully to device %s", targetDeviceID)
 
 	// Discard channel requests
 	go ssh.DiscardRequests(requests)

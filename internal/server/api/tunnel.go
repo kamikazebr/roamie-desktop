@@ -4,11 +4,13 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/kamikazebr/roamie-desktop/internal/server/services"
 	"github.com/kamikazebr/roamie-desktop/internal/server/storage"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"golang.org/x/crypto/ssh"
 )
 
 // TunnelHandler handles SSH reverse tunnel related requests
@@ -158,13 +160,24 @@ func (h *TunnelHandler) GetStatus(w http.ResponseWriter, r *http.Request) {
 				"tunnel_port": *device.TunnelPort,
 				"vpn_ip":      device.VpnIP,
 				"last_seen":   device.LastSeen,
+				"enabled":     device.TunnelEnabled,
 			})
 		}
 	}
 
 	serverHost := os.Getenv("TUNNEL_SERVER_HOST")
 	if serverHost == "" {
-		serverHost = "server"
+		// Fallback to WG_SERVER_PUBLIC_ENDPOINT (extract host without port)
+		serverHost = os.Getenv("WG_SERVER_PUBLIC_ENDPOINT")
+		if serverHost != "" {
+			// Remove port if present (e.g., "example.com:51820" -> "example.com")
+			for i := len(serverHost) - 1; i >= 0; i-- {
+				if serverHost[i] == ':' {
+					serverHost = serverHost[:i]
+					break
+				}
+			}
+		}
 	}
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{
@@ -206,8 +219,22 @@ func (h *TunnelHandler) RegisterKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Normalize the key: parse and re-marshal to remove comments and ensure consistent format
+	// This is important because ssh-keygen produces keys with comments like "root@hostname"
+	// but ssh.MarshalAuthorizedKey() produces keys without comments
+	parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(req.PublicKey))
+	if err != nil {
+		log.Printf("Failed to parse SSH key for device %s: %v", device.ID, err)
+		respondErrorJSON(w, http.StatusBadRequest, "invalid SSH public key format")
+		return
+	}
+	normalizedKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsedKey)))
+
+	// Debug: log the key being stored
+	log.Printf("DEBUG: Storing SSH key for device %s (first 80 chars): %.80s...", device.ID, normalizedKey)
+
 	// Update SSH key
-	if err := h.deviceRepo.UpdateTunnelSSHKey(r.Context(), device.ID, req.PublicKey); err != nil {
+	if err := h.deviceRepo.UpdateTunnelSSHKey(r.Context(), device.ID, normalizedKey); err != nil {
 		log.Printf("Failed to update SSH key for device %s: %v", device.ID, err)
 		respondErrorJSON(w, http.StatusInternalServerError, "failed to register SSH key")
 		return
