@@ -4,39 +4,68 @@
 package wireguard
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"os/exec"
-	"strings"
+	"runtime"
 )
 
 // canAutoInstall checks if we can auto-install WireGuard on macOS
+// Only if brew is available
 func canAutoInstall() bool {
 	return isBrewAvailable()
 }
 
 // getInstallMethod returns the available installation method
 func getInstallMethod() string {
-	if isBrewAvailable() {
-		return "brew"
-	}
-	return "manual"
+	return "brew"
 }
 
 // isBrewAvailable checks if Homebrew is installed
 func isBrewAvailable() bool {
+	// Check common brew paths based on architecture
+	brewPaths := []string{
+		"/opt/homebrew/bin/brew", // Apple Silicon
+		"/usr/local/bin/brew",    // Intel
+	}
+
+	for _, path := range brewPaths {
+		if _, err := os.Stat(path); err == nil {
+			return true
+		}
+	}
+
+	// Fallback to PATH lookup
 	_, err := exec.LookPath("brew")
 	return err == nil
 }
 
+// getBrewPath returns the path to brew binary
+func getBrewPath() string {
+	if runtime.GOARCH == "arm64" {
+		return "/opt/homebrew/bin/brew"
+	}
+	return "/usr/local/bin/brew"
+}
+
+
 // installWithBrew installs WireGuard using Homebrew
 func installWithBrew() error {
-	fmt.Println("Installing WireGuard via Homebrew...")
-	fmt.Println("Running: brew install wireguard-tools")
+	brewPath := getBrewPath()
+
+	// If brew not in expected path, try to find it
+	if _, err := os.Stat(brewPath); err != nil {
+		if path, err := exec.LookPath("brew"); err == nil {
+			brewPath = path
+		} else {
+			return fmt.Errorf("brew not found after installation")
+		}
+	}
+
+	fmt.Println("📦 Installing WireGuard via Homebrew...")
 	fmt.Println()
 
-	cmd := exec.Command("brew", "install", "wireguard-tools")
+	cmd := exec.Command(brewPath, "install", "wireguard-tools")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
@@ -48,59 +77,31 @@ func installWithBrew() error {
 	return nil
 }
 
-// promptInstallPlatform handles macOS-specific installation prompts
+// promptInstallPlatform handles macOS-specific installation - automatic if brew available
 func promptInstallPlatform(result *PreflightResult) (bool, error) {
-	if result.CanAutoInstall {
-		fmt.Println("WireGuard can be installed automatically via Homebrew.")
+	// If brew is not available, show instructions and exit
+	if !isBrewAvailable() {
+		fmt.Println("Homebrew is required to install WireGuard.")
 		fmt.Println()
-		fmt.Println("Options:")
-		fmt.Println("  [1] Install via Homebrew (recommended)")
-		fmt.Println("      brew install wireguard-tools")
+		fmt.Println("Please install Homebrew and WireGuard, then run this command again:")
 		fmt.Println()
-		fmt.Println("  [2] Download WireGuard.app (GUI)")
-		fmt.Println("      https://apps.apple.com/app/wireguard/id1451685025")
+		fmt.Println("  /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
+		fmt.Println("  brew install wireguard-tools")
 		fmt.Println()
-		fmt.Println("  [3] Cancel and install manually")
-		fmt.Println()
-
-		fmt.Print("Choose option [1/2/3]: ")
-		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
-		input = strings.TrimSpace(input)
-
-		switch input {
-		case "1", "":
-			if err := installWithBrew(); err != nil {
-				return false, err
-			}
-			return true, nil
-		case "2":
-			fmt.Println("\nPlease install WireGuard.app from the App Store:")
-			fmt.Println("  https://apps.apple.com/app/wireguard/id1451685025")
-			fmt.Println("\nAfter installation, run this command again.")
-			return false, nil
-		default:
-			fmt.Println("\nInstallation cancelled.")
-			fmt.Println("To install manually, run:")
-			fmt.Println("  brew install wireguard-tools")
-			fmt.Println("\nOr download WireGuard.app from:")
-			fmt.Println("  https://apps.apple.com/app/wireguard/id1451685025")
-			return false, nil
-		}
+		return false, nil
 	}
 
-	// Homebrew not available
-	fmt.Println("To install WireGuard on macOS:")
-	fmt.Println()
-	fmt.Println("Option 1: Install Homebrew first, then WireGuard:")
-	fmt.Println("  /bin/bash -c \"$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\"")
-	fmt.Println("  brew install wireguard-tools")
-	fmt.Println()
-	fmt.Println("Option 2: Download WireGuard.app from the App Store:")
-	fmt.Println("  https://apps.apple.com/app/wireguard/id1451685025")
-	fmt.Println()
-	fmt.Println("After installation, run this command again.")
-	return false, nil
+	// Brew available - install WireGuard automatically
+	if err := installWithBrew(); err != nil {
+		return false, fmt.Errorf("failed to install WireGuard: %w\n\nTo install manually:\n  brew install wireguard-tools", err)
+	}
+
+	// Verify installation
+	if !CheckInstalled() {
+		return false, fmt.Errorf("WireGuard installation completed but 'wg' command not found.\nTry opening a new terminal and running the command again")
+	}
+
+	return true, nil
 }
 
 // getInstallInstructions returns macOS-specific installation instructions
@@ -108,19 +109,16 @@ func getInstallInstructions() string {
 	if isBrewAvailable() {
 		return `WireGuard is not installed.
 
-To install via Homebrew:
-  brew install wireguard-tools
-
-Or download WireGuard.app from:
-  https://apps.apple.com/app/wireguard/id1451685025`
+Roamie will automatically install it when you run:
+  sudo roamie auth login`
 	}
 
 	return `WireGuard is not installed.
 
-To install on macOS:
-  1. Install Homebrew: /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-  2. Install WireGuard: brew install wireguard-tools
+Please install Homebrew and WireGuard first:
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+  brew install wireguard-tools
 
-Or download WireGuard.app from:
-  https://apps.apple.com/app/wireguard/id1451685025`
+Then run:
+  sudo roamie auth login`
 }
