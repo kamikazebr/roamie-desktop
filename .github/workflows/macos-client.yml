@@ -18,7 +18,7 @@ on:
       - 'pkg/**'
       - 'go.mod'
       - 'go.sum'
-  workflow_dispatch: # Allow manual trigger for exploration
+  workflow_dispatch:
 
 jobs:
   test-macos:
@@ -32,184 +32,87 @@ jobs:
           go-version: '1.23'
 
       # ============================================
-      # Layer 1: WireGuard Tools Installation
+      # WireGuard Tools Installation
       # ============================================
       - name: Install WireGuard tools
-        run: |
-          brew install wireguard-tools
-          echo "✅ WireGuard tools installed"
+        run: brew install wireguard-tools
 
       - name: Verify WireGuard installation
         run: |
-          echo "=== WireGuard binaries ==="
-          which wg
-          which wg-quick
+          which wg && which wg-quick && which wireguard-go
           wg --version
-          echo "=== Available commands ==="
-          wg help 2>&1 || true
 
       # ============================================
-      # Layer 2: Build Client Binary
+      # Build Client Binary
       # ============================================
       - name: Build client for macOS
         run: |
           go build -o roamie ./cmd/client
-          echo "✅ Client binary built"
           ./roamie --help
 
       - name: Build for multiple architectures
         run: |
           GOOS=darwin GOARCH=amd64 go build -o roamie-darwin-amd64 ./cmd/client
           GOOS=darwin GOARCH=arm64 go build -o roamie-darwin-arm64 ./cmd/client
-          echo "✅ Multi-arch builds successful"
           ls -la roamie-darwin-*
 
       # ============================================
-      # Layer 3: Config Validation
+      # WireGuard Interface Test
       # ============================================
-      - name: Create test WireGuard config
+      - name: Test WireGuard interface creation
         run: |
           mkdir -p /tmp/wg-test
+          chmod 700 /tmp/wg-test
 
-          # Generate real keypair for valid syntax test
-          # Keys are ephemeral, destroyed after workflow, never logged
-          wg genkey | tee /tmp/wg-test/.privkey | wg pubkey > /tmp/wg-test/.pubkey
+          # Generate ephemeral keypair (never logged)
+          wg genkey > /tmp/wg-test/.privkey
+          wg pubkey < /tmp/wg-test/.privkey > /tmp/wg-test/.pubkey
+          chmod 600 /tmp/wg-test/.privkey
 
+          # Create config with proper permissions
           cat > /tmp/wg-test/wg0.conf << EOF
           [Interface]
           PrivateKey = $(cat /tmp/wg-test/.privkey)
           Address = 10.100.0.2/32
-          DNS = 1.1.1.1
 
           [Peer]
           PublicKey = $(cat /tmp/wg-test/.pubkey)
           Endpoint = 127.0.0.1:51820
           AllowedIPs = 10.100.0.0/24
           EOF
+          chmod 600 /tmp/wg-test/wg0.conf
 
-          echo "✅ Config created (keys are ephemeral, not logged)"
+          # Bring up interface
+          sudo wg-quick up /tmp/wg-test/wg0.conf
 
-      - name: Validate config syntax
-        run: |
-          wg-quick strip /tmp/wg-test/wg0.conf > /dev/null
-          echo "✅ Config syntax valid"
+          # Verify interface created
+          ifconfig | grep -q utun || { echo "utun interface not created"; exit 1; }
+          sudo wg show | grep -q "interface" || { echo "wg show failed"; exit 1; }
 
-      - name: "EXPLORE: Test wg setconf validation"
-        continue-on-error: true
-        run: |
-          echo "=== Testing if wg validates keys ==="
-
-          # Create invalid config
-          cat > /tmp/wg-test/invalid.conf << 'EOF'
-          [Interface]
-          PrivateKey = not-a-valid-base64-key!!!
-          Address = 10.100.0.2/32
-          EOF
-
-          # wg-quick strip does NOT validate keys - it just parses
-          echo "--- wg-quick strip (no validation): ---"
-          wg-quick strip /tmp/wg-test/invalid.conf 2>&1 && echo "wg-quick strip: PASSED (no key validation)" || echo "wg-quick strip: FAILED"
-
-          # wg showconf requires an interface, can't test offline
-          echo ""
-          echo "NOTE: wg-quick strip only parses syntax, doesn't validate base64 keys"
-          echo "Key validation happens at runtime when setting up interface"
+          # Cleanup
+          sudo wg-quick down /tmp/wg-test/wg0.conf
 
       # ============================================
-      # Layer 4: Capability Discovery (EXPLORATORY)
+      # Client CLI Tests
       # ============================================
-      - name: "EXPLORE: Check sudo availability"
+      - name: Test client CLI commands
         run: |
-          echo "=== Testing sudo access ==="
-          if sudo -n true 2>/dev/null; then
-            echo "✅ SUDO: Available without password"
-          else
-            echo "❌ SUDO: Requires password or unavailable"
-          fi
-
-      - name: "EXPLORE: Check network interfaces"
-        run: |
-          echo "=== Current interfaces ==="
-          ifconfig -a | grep -E '^[a-z]' || true
-          echo ""
-          echo "=== Looking for utun ==="
-          ifconfig | grep utun || echo "No utun interfaces currently"
-
-      - name: "EXPLORE: Try wg-quick up"
-        continue-on-error: true
-        run: |
-          echo "=== Attempting wg-quick up ==="
-          sudo wg-quick up /tmp/wg-test/wg0.conf 2>&1 && {
-            echo "✅ WG-QUICK UP: Success!"
-            echo "=== Interface created ==="
-            ifconfig | grep -A5 utun || true
-            sudo wg show || true
-
-            echo "=== Cleaning up ==="
-            sudo wg-quick down /tmp/wg-test/wg0.conf 2>&1 || true
-          } || {
-            echo "❌ WG-QUICK UP: Failed"
-            echo "Exit code: $?"
-          }
-
-      - name: "EXPLORE: Try manual utun creation"
-        continue-on-error: true
-        run: |
-          echo "=== Attempting manual interface creation ==="
-          # Try to create utun via ifconfig
-          sudo ifconfig utun9 create 2>&1 && {
-            echo "✅ UTUN CREATE: Success!"
-            ifconfig utun9 || true
-            sudo ifconfig utun9 destroy 2>&1 || true
-          } || {
-            echo "❌ UTUN CREATE: Failed"
-          }
-
-      - name: "EXPLORE: Check wireguard-go"
-        continue-on-error: true
-        run: |
-          echo "=== Looking for wireguard-go ==="
-          which wireguard-go || echo "wireguard-go not in PATH"
-          brew list wireguard-tools --verbose 2>/dev/null | head -20 || true
-
-      # ============================================
-      # Layer 5: Client Commands
-      # ============================================
-      - name: Test client commands
-        run: |
-          echo "=== Testing CLI commands ==="
           ./roamie --help
           ./roamie auth --help || true
           ./roamie devices --help || true
           ./roamie tunnel --help || true
-          echo "✅ CLI commands respond correctly"
 
       # ============================================
-      # Layer 6: Unit Tests
+      # Unit Tests
       # ============================================
       - name: Run unit tests
-        run: |
-          go test -v -short ./cmd/client/... ./internal/client/... ./pkg/... 2>&1 || true
+        run: go test -v -short ./cmd/client/... ./internal/client/... ./pkg/... 2>&1 || true
 
       # ============================================
       # Cleanup
       # ============================================
-      - name: Cleanup sensitive files
+      - name: Cleanup
         if: always()
         run: |
+          sudo wg-quick down /tmp/wg-test/wg0.conf 2>/dev/null || true
           rm -rf /tmp/wg-test
-          echo "✅ Test files cleaned up"
-
-      # ============================================
-      # Summary
-      # ============================================
-      - name: Capability Summary
-        if: always()
-        run: |
-          echo ""
-          echo "========================================="
-          echo "  macOS GitHub Actions Capability Report"
-          echo "========================================="
-          echo "See individual EXPLORE steps above for"
-          echo "what actually works in this environment."
-          echo "========================================="
