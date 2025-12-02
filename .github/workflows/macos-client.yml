@@ -94,20 +94,26 @@ jobs:
           wg-quick strip /tmp/wg-test/wg0.conf > /dev/null
           echo "✅ Config syntax valid"
 
-      - name: Test invalid config detection
+      - name: "EXPLORE: Test wg setconf validation"
+        continue-on-error: true
         run: |
+          echo "=== Testing if wg validates keys ==="
+
+          # Create invalid config
           cat > /tmp/wg-test/invalid.conf << 'EOF'
           [Interface]
           PrivateKey = not-a-valid-base64-key!!!
           Address = 10.100.0.2/32
           EOF
 
-          if wg-quick strip /tmp/wg-test/invalid.conf 2>/dev/null; then
-            echo "❌ Should have detected invalid config"
-            exit 1
-          else
-            echo "✅ Invalid config correctly rejected"
-          fi
+          # wg-quick strip does NOT validate keys - it just parses
+          echo "--- wg-quick strip (no validation): ---"
+          wg-quick strip /tmp/wg-test/invalid.conf 2>&1 && echo "wg-quick strip: PASSED (no key validation)" || echo "wg-quick strip: FAILED"
+
+          # wg showconf requires an interface, can't test offline
+          echo ""
+          echo "NOTE: wg-quick strip only parses syntax, doesn't validate base64 keys"
+          echo "Key validation happens at runtime when setting up interface"
 
       # ============================================
       # Layer 4: Capability Discovery (EXPLORATORY)
