@@ -313,6 +313,18 @@ This ensures each email account gets a unique subnet, even when using the same p
 - `roamie daemon stop` - Stop daemon
 - `roamie daemon status` - Check daemon status
 
+### macOS Client Installation
+
+When running `sudo roamie auth login` on macOS:
+
+| Scenario | Behavior |
+|----------|----------|
+| WireGuard installed | Proceeds normally |
+| Brew installed, WireGuard missing | Auto-runs `brew install wireguard-tools` |
+| Brew not installed | Shows instructions to install brew + wireguard, then exit |
+
+**Note**: `sudo` is required because `wg-quick up` needs root to create `utun` network interface.
+
 ## API Endpoints
 
 ### Public
@@ -352,6 +364,20 @@ The project includes comprehensive Docker-based E2E tests using `docker-compose.
 - `./scripts/test-e2e-real-client.sh` - Full VPN connectivity test with multiple users
 - `./scripts/test-device-registration.sh` - Device lifecycle (register, list, delete)
 - `./scripts/test-device-auth.sh` - QR code device authorization flow
+
+### GitHub Actions macOS CI
+Workflow: `.github/workflows/macos-client.yml`
+
+**What works on GitHub Actions macOS runner:**
+- `brew install wireguard-tools` - installs wg, wg-quick, wireguard-go
+- `sudo` - available without password
+- `wg-quick up` - creates `utun` interface successfully
+- `wg show` - works after interface is up
+- Multi-arch build (amd64 + arm64)
+
+**What doesn't work:**
+- Real VPN handshake (needs server connectivity)
+- Manual `ifconfig utun create` (returns SIOCIFCREATE2 error)
 
 ## Common Development Tasks
 
@@ -451,13 +477,52 @@ Local PostgreSQL may be running. Either:
 - Network isolation prevents inter-user device communication
 - HTTPS recommended for production (configure `ENABLE_TLS=true`)
 
-## Development Best Practices
+## Deployment
 
-### Before Deploying
+### Release Tags (Client vs Server)
+Client and server have **separate versioning** with different git tags:
+
+| Component | Tag Pattern | Workflow | Output |
+|-----------|-------------|----------|--------|
+| **Client** | `v*` (e.g., `v0.0.1`, `v1.0.0`) | `release.yml` | Multi-platform binaries on GitHub Releases |
+| **Server** | `server-v*` (e.g., `server-v0.0.1`) | `docker.yml` | Docker image on `ghcr.io/kamikazebr/roamie-desktop/roamie-server` |
+
+**Creating a release:**
+```bash
+# Client release (triggers multi-platform build)
+git tag v0.0.3 && git push origin v0.0.3
+
+# Server release (triggers Docker image build)
+git tag server-v0.0.3 && git push origin server-v0.0.3
+```
+
+### Server Deployment (Manual)
+Deploy to production server using the deploy script:
+```bash
+# Build and deploy
+./scripts/build.sh && ./scripts/deploy.sh
+```
+
+The script:
+1. Copies `roamie-server` binary and `.env.production` to server
+2. Restarts systemd service
+3. Runs health check
+
+### Production Server
+- **IP**: `178.156.133.88`
+- **API Port**: `8081` (not 8080)
+- **SSH**: `root@178.156.133.88`
+- **DB User**: `roamie` (development uses `wireguard`)
+- **Service**: `systemctl status roamie`
+- **Logs**: `journalctl -u roamie -f`
+
+### Pre-Deployment Checklist
 1. **Always build first**: `./scripts/build.sh`
 2. **Run all tests**: `go test ./...`
-3. **Write integration tests** for critical flows when unit tests aren't enough
+3. **Run E2E tests**: `./scripts/test-e2e-real-client.sh`
 4. **Test the actual fix**, not assumptions
+
+## Development Best Practices
 
 ### Database Operations
 - **Check the SQL**: When modifying repository methods, verify the actual INSERT/UPDATE statement includes all needed columns
