@@ -80,6 +80,8 @@ services:
       # DEV ports - different from production
       - "${DEV_WG_PORT:-51821}:51821/udp"
       - "${DEV_SSH_TUNNEL_PORT:-2224}:2222"
+      # API port - exposed for direct access (Coolify can also proxy this)
+      - "${DEV_API_PORT:-8082}:${DEV_API_PORT:-8082}"
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
