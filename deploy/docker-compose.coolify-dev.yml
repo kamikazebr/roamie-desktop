@@ -4,7 +4,7 @@
 # Differences from production:
 # - Container names: roamie-dev-*
 # - Volumes: roamie_dev_*
-# - Ports: 51821 (WG), 2224 (SSH), 8082 (API)
+# - Ports: 51821 (WG), 2224 (SSH), 8083 (API)
 # - Network: 10.101.0.0/16 (instead of 10.100.0.0/16)
 # - WireGuard interface: wg-dev
 
@@ -42,7 +42,7 @@ services:
         condition: service_healthy
     environment:
       # Database
-      DATABASE_URL: postgres://${DEV_DB_USER}:${DEV_DB_PASSWORD}@${DEV_DB_HOST:-postgres}:5432/${DEV_DB_NAME}?sslmode=disable
+      DATABASE_URL: postgres://${DEV_DB_USER}:${DEV_DB_PASSWORD}@${DEV_DB_HOST:-roamie-dev-postgres}:5432/${DEV_DB_NAME}?sslmode=disable
 
       # Server Configuration
       API_HOST: ${DEV_API_HOST}
@@ -81,7 +81,7 @@ services:
       - "${DEV_WG_PORT:-51821}:51821/udp"
       - "${DEV_SSH_TUNNEL_PORT:-2224}:2222"
       # API port - exposed for direct access (Coolify can also proxy this)
-      - "${DEV_API_PORT:-8082}:${DEV_API_PORT:-8082}"
+      - "${DEV_API_PORT:-8083}:${DEV_API_PORT:-8083}"
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
@@ -94,14 +94,22 @@ services:
       - roamie-dev-internal
       - coolify
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${DEV_API_PORT:-8082}/health"]
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://localhost:${DEV_API_PORT:-8083}/health",
+        ]
       interval: 30s
       timeout: 10s
       start_period: 10s
       retries: 3
     labels:
       - "coolify.managed=true"
-      - "coolify.port=${DEV_API_PORT:-8082}"
+      - "coolify.port=${DEV_API_PORT:-8083}"
 
 # ============================================
 # Volumes (DEV - separate from production)
