@@ -14,7 +14,7 @@ fi
 
 echo "Running migrations..."
 
-for migration in migrations/*.sql; do
+for migration in cmd/server/migrations/*.sql; do
     echo "Applying: $migration"
     psql "$DATABASE_URL" -f "$migration"
 done
