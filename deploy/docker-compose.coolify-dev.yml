@@ -12,7 +12,7 @@ services:
   # ============================================
   # PostgreSQL Database (DEV)
   # ============================================
-  postgres:
+  roamie-dev-postgres:
     image: postgres:15-alpine
     container_name: roamie-dev-postgres
     restart: unless-stopped
@@ -38,7 +38,7 @@ services:
     container_name: roamie-dev-server
     restart: unless-stopped
     depends_on:
-      postgres:
+      roamie-dev-postgres:
         condition: service_healthy
     environment:
       # Database
