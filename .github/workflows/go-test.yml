@@ -38,10 +38,16 @@ jobs:
 
       - name: Run migrations
         env:
-          DATABASE_URL: postgres://wireguard:wireguard@localhost:5432/roamie_test?sslmode=disable
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: wireguard
+          PGPASSWORD: wireguard
+          PGDATABASE: roamie_test
         run: |
-          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
-          migrate -path cmd/server/migrations -database "$DATABASE_URL" up
+          for migration in cmd/server/migrations/*.sql; do
+            echo "Applying: $migration"
+            psql -f "$migration"
+          done
 
       - name: Run tests with coverage
         env:
