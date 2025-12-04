@@ -40,7 +40,7 @@ jobs:
         env:
           DATABASE_URL: postgres://wireguard:wireguard@localhost:5432/roamie_test?sslmode=disable
         run: |
-          go install github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
           migrate -path cmd/server/migrations -database "$DATABASE_URL" up
 
       - name: Run tests with coverage
