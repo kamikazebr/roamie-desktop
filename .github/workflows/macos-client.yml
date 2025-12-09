@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'cmd/client/**'
+      - 'cmd/test-tui/**'
       - 'internal/client/**'
       - 'pkg/**'
       - 'go.mod'
@@ -14,6 +15,7 @@ on:
     branches: [main]
     paths:
       - 'cmd/client/**'
+      - 'cmd/test-tui/**'
       - 'internal/client/**'
       - 'pkg/**'
       - 'go.mod'
@@ -109,6 +111,68 @@ jobs:
         run: go test -v -short ./cmd/client/... ./internal/client/... ./pkg/... 2>&1 || true
 
       # ============================================
+      # SSH Preflight TUI Tests (launchd + sshd)
+      # ============================================
+      - name: Build test-tui binary
+        run: go build -o test-tui ./cmd/test-tui
+
+      - name: Test SSH detection - disabled state
+        run: |
+          echo "=== Testing SSH detection (Remote Login disabled) ==="
+          # On GitHub runners, Remote Login (SSH) is disabled by default
+
+          # Check launchctl status
+          echo "Checking launchctl for sshd..."
+          launchctl list com.openssh.sshd || echo "sshd not loaded (expected)"
+
+          # Check systemsetup status (may need sudo)
+          echo "Checking systemsetup..."
+          sudo systemsetup -getremotelogin || true
+
+          # Run our detection tests
+          echo "Running sshd preflight tests..."
+          go test -v -run TestCheck ./internal/client/sshd/
+          go test -v -run TestIsRunning ./internal/client/sshd/
+          go test -v -run TestCheckPlatformSpecific ./internal/client/sshd/
+
+      - name: Enable SSH (Remote Login)
+        run: |
+          echo "=== Enabling Remote Login (SSH) ==="
+          sudo systemsetup -setremotelogin on
+
+          # Wait for sshd to start
+          sleep 2
+
+          # Verify it's enabled
+          sudo systemsetup -getremotelogin
+
+      - name: Test SSH detection - enabled state
+        run: |
+          echo "=== Testing SSH detection (Remote Login enabled) ==="
+
+          # Check launchctl status
+          echo "Checking launchctl for sshd..."
+          launchctl list com.openssh.sshd || echo "sshd check"
+
+          # Check if port 22 is listening
+          echo "Checking port 22..."
+          nc -z 127.0.0.1 22 && echo "Port 22 is listening" || echo "Port 22 not listening"
+
+          # Run our detection tests - SSH should be running now
+          echo "Running sshd preflight tests..."
+          go test -v -run TestCheck ./internal/client/sshd/
+          go test -v -run TestIsRunning ./internal/client/sshd/
+
+          # Verify IsRunning returns true
+          go test -v -run TestIsRunning ./internal/client/sshd/ 2>&1 | grep -q "IsRunning: true" && echo "✓ SSH correctly detected as running" || echo "⚠ SSH detection issue"
+
+      - name: Disable SSH (cleanup)
+        if: always()
+        run: |
+          echo "=== Disabling Remote Login (SSH) ==="
+          sudo systemsetup -setremotelogin off || true
+
+      # ============================================
       # Cleanup
       # ============================================
       - name: Cleanup
@@ -116,3 +180,4 @@ jobs:
         run: |
           sudo wg-quick down /tmp/wg-test/wg0.conf 2>/dev/null || true
           rm -rf /tmp/wg-test
+          sudo systemsetup -setremotelogin off 2>/dev/null || true
