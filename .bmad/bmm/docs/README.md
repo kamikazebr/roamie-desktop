@@ -32,11 +32,18 @@ Understanding how BMM adapts to your needs:
   - Documentation requirements per track
   - Planning workflow routing
 
-- **[Quick Spec Flow](./quick-spec-flow.md)** - Fast-track workflow for Quick Flow track (26 min read)
-  - Bug fixes and small features
-  - Rapid prototyping approach
-  - Auto-detection of stack and patterns
-  - Minutes to implementation
+- **[BMAD Quick Flow](./bmad-quick-flow.md)** - Fast-track development workflow (32 min read)
+  - 3-step process: spec → dev → optional review
+  - Perfect for bug fixes and small features
+  - Rapid prototyping with production quality
+  - Hours to implementation, not days
+  - Barry (Quick Flow Solo Dev) agent owned
+
+- **[Quick Flow Solo Dev Agent](./quick-flow-solo-dev.md)** - Elite solo developer for rapid development (18 min read)
+  - Barry is an elite developer who thrives on autonomous execution
+  - Lives and breathes the BMAD Quick Flow workflow
+  - Takes projects from concept to deployment with ruthless efficiency
+  - No handoffs, no delays - just pure focused development
 
 ---
 
@@ -92,11 +99,12 @@ Essential reference materials:
 → Then review [Scale Adaptive System](./scale-adaptive-system.md) to understand tracks
 
 **Fix a bug or add small feature**
-→ Go directly to [Quick Spec Flow](./quick-spec-flow.md)
+→ Go to [BMAD Quick Flow](./bmad-quick-flow.md) for rapid development
+→ Or use [Quick Flow Solo Dev](./quick-flow-solo-dev.md) directly
 
 **Work with existing codebase (brownfield)**
 → Read [Brownfield Development Guide](./brownfield-guide.md)
-→ Pay special attention to Phase 0 documentation requirements
+→ Pay special attention to documentation requirements for brownfield projects
 
 **Understand planning tracks and methodology**
 → See [Scale Adaptive System](./scale-adaptive-system.md)
@@ -131,12 +139,23 @@ Comprehensive documentation for all BMM workflows organized by phase:
   - Complete story lifecycle
   - One-story-at-a-time discipline
 
+<<<<<<< Updated upstream
+<<<<<<< Updated upstream
+
 - **[Testing & QA Workflows](./test-architecture.md)** - Comprehensive quality assurance (1,420 lines)
   - Test strategy, automation, quality gates
   - TEA agent and test healing
   - BMad-integrated vs standalone modes
 
 **Total: 34 workflows documented across all phases**
+
+=======
+
+> > > > > > > Stashed changes
+
+=======
+
+> > > > > > > Stashed changes
 
 ### Advanced Workflow References
 
@@ -162,10 +181,21 @@ Quality assurance guidance:
 
 <!-- Test Architect documentation to be added -->
 
+<<<<<<< Updated upstream
+
+<<<<<<< Updated upstream
+
 - Test design workflows
 - Quality gates
 - Risk assessment
-- NFR validation
+- # NFR validation
+  =======
+  > > > > > > > Stashed changes
+  - Test design workflows
+  - Quality gates
+  - Risk assessment
+  - NFR validation
+    > > > > > > > Stashed changes
 
 ---
 
@@ -209,11 +239,13 @@ flowchart TD
 
     QS --> DECIDE{What are you building?}
 
-    DECIDE -->|Bug fix or<br/>small feature| QSF[Quick Spec Flow]
+    DECIDE -->|Bug fix or<br/>small feature| QF[BMAD Quick Flow]
+    DECIDE -->|Need rapid<br/>development| PE[Principal Engineer]
     DECIDE -->|New project| SAS[Scale Adaptive System]
     DECIDE -->|Existing codebase| BF[Brownfield Guide]
 
-    QSF --> IMPL[Implementation]
+    QF --> IMPL[Implementation]
+    PE --> IMPL
     SAS --> IMPL
     BF --> IMPL
 
@@ -222,6 +254,8 @@ flowchart TD
     style START fill:#bfb,stroke:#333,stroke-width:2px,color:#000
     style QS fill:#bbf,stroke:#333,stroke-width:2px,color:#000
     style DECIDE fill:#ffb,stroke:#333,stroke-width:2px,color:#000
+    style QF fill:#e1f5fe,stroke:#333,stroke-width:2px,color:#000
+    style PE fill:#fff3e0,stroke:#333,stroke-width:2px,color:#000
     style IMPL fill:#f9f,stroke:#333,stroke-width:2px,color:#000
 ```
 
