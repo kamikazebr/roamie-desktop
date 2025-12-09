@@ -34,18 +34,7 @@ jobs:
           go-version: '1.23'
 
       # ============================================
-      # WireGuard Tools Installation
-      # ============================================
-      - name: Install WireGuard tools
-        run: brew install wireguard-tools
-
-      - name: Verify WireGuard installation
-        run: |
-          which wg && which wg-quick && which wireguard-go
-          wg --version
-
-      # ============================================
-      # Build Client Binary
+      # Build Client Binary (before installing WireGuard)
       # ============================================
       - name: Build client for macOS
         run: |
@@ -57,6 +46,46 @@ jobs:
           GOOS=darwin GOARCH=amd64 go build -o roamie-darwin-amd64 ./cmd/client
           GOOS=darwin GOARCH=arm64 go build -o roamie-darwin-arm64 ./cmd/client
           ls -la roamie-darwin-*
+
+      - name: Build test-tui binary
+        run: go build -o test-tui ./cmd/test-tui
+
+      # ============================================
+      # WireGuard Auto-Install Test (TUI)
+      # ============================================
+      - name: Test WireGuard detection - NOT installed
+        run: |
+          echo "=== Testing WireGuard detection (NOT installed) ==="
+
+          # Verify WireGuard is NOT installed
+          which wg && echo "ERROR: wg already installed!" && exit 1 || echo "✓ wg not found (expected)"
+          which wg-quick && echo "ERROR: wg-quick already installed!" && exit 1 || echo "✓ wg-quick not found (expected)"
+
+          # Run our detection tests
+          echo "Running wireguard preflight tests..."
+          go test -v -run TestCheckInstalled ./internal/client/wireguard/
+          go test -v -run TestRunPreflight ./internal/client/wireguard/
+          go test -v -run TestCanAutoInstall ./internal/client/wireguard/
+
+          # Verify brew is available for auto-install
+          which brew && echo "✓ brew available for auto-install" || echo "⚠ brew not found"
+
+      - name: Test WireGuard auto-install via TUI
+        run: |
+          echo "=== Testing WireGuard auto-install ==="
+
+          # This test will call PromptInstall() which runs 'brew install wireguard-tools'
+          go test -v -run TestAutoInstallFlow ./internal/client/wireguard/
+
+          echo "Verifying installation..."
+          which wg && echo "✓ wg installed" || echo "✗ wg not found"
+          which wg-quick && echo "✓ wg-quick installed" || echo "✗ wg-quick not found"
+          wg --version || true
+
+      - name: Verify WireGuard installation
+        run: |
+          which wg && which wg-quick && which wireguard-go
+          wg --version
 
       # ============================================
       # WireGuard Interface Test
@@ -113,9 +142,6 @@ jobs:
       # ============================================
       # SSH Preflight TUI Tests (launchd + sshd)
       # ============================================
-      - name: Build test-tui binary
-        run: go build -o test-tui ./cmd/test-tui
-
       - name: Test SSH detection - disabled state
         run: |
           echo "=== Testing SSH detection (Remote Login disabled) ==="
