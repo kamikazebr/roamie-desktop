@@ -12,6 +12,21 @@
 
 set -e
 
+# Detect OS - Docker+systemd tests only work on Linux
+if [ "$(uname -s)" = "Darwin" ]; then
+    echo ""
+    echo "⚠️  macOS detected"
+    echo ""
+    echo "Docker-based tests require Linux with systemd."
+    echo "These tests run automatically in GitHub Actions CI."
+    echo ""
+    echo "For local macOS testing, run:"
+    echo "  go test -v ./internal/client/sshd/"
+    echo "  go test -v ./internal/client/wireguard/"
+    echo ""
+    exit 0
+fi
+
 SCENARIO="${1:-all}"
 DOCKER_DIR="docker/test-tui"
 

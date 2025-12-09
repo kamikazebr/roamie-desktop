@@ -63,3 +63,113 @@ jobs:
           name: coverage-report
           path: coverage.out
           retention-days: 30
+
+  test-tui-linux:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      # Build test binary
+      - name: Build test-tui binary
+        run: go build -o test-tui ./cmd/test-tui
+
+      # ============================================
+      # WireGuard Auto-Install Test (apt)
+      # ============================================
+      - name: Test WireGuard detection - NOT installed
+        run: |
+          echo "=== Testing WireGuard detection (NOT installed) ==="
+
+          # Verify WireGuard is NOT installed on fresh runner
+          which wg && echo "ERROR: wg already installed!" && exit 1 || echo "✓ wg not found (expected)"
+
+          # Run our detection tests
+          echo "Running wireguard preflight tests..."
+          go test -v -run TestCheckInstalled ./internal/client/wireguard/
+          go test -v -run TestRunPreflight ./internal/client/wireguard/
+          go test -v -run TestCanAutoInstall ./internal/client/wireguard/
+
+      - name: Test WireGuard auto-install via apt
+        run: |
+          echo "=== Testing WireGuard auto-install ==="
+
+          # This test will call PromptInstall() which runs 'apt install wireguard'
+          go test -v -run TestAutoInstallFlow ./internal/client/wireguard/
+
+          echo "Verifying installation..."
+          which wg && echo "✓ wg installed" || exit 1
+          wg --version || true
+
+      # ============================================
+      # SSH Docker Integration Tests (systemd)
+      # ============================================
+      - name: Build Docker test images
+        run: |
+          echo "Building Docker images for SSH tests..."
+          docker build -t roamie-test-running -f docker/test-tui/Dockerfile.sshd-running .
+          docker build -t roamie-test-stopped -f docker/test-tui/Dockerfile.sshd-stopped .
+          docker build -t roamie-test-nosshd -f docker/test-tui/Dockerfile.no-sshd .
+
+      - name: Test scenario - SSHD running
+        run: |
+          echo "=== Testing scenario: SSHD running ==="
+          CONTAINER=$(docker run -d --rm --privileged \
+            --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$(pwd)/test-tui:/test-tui" \
+            roamie-test-running)
+          echo "Container: ${CONTAINER:0:12}"
+          sleep 3
+
+          echo "Checking state..."
+          docker exec "$CONTAINER" dpkg -l openssh-server | grep -q '^ii' && echo "✓ openssh installed"
+          docker exec "$CONTAINER" systemctl is-active ssh && echo "✓ ssh running"
+
+          echo "Running TUI test..."
+          docker exec "$CONTAINER" /test-tui || true
+
+          docker stop "$CONTAINER"
+
+      - name: Test scenario - SSHD stopped
+        run: |
+          echo "=== Testing scenario: SSHD stopped ==="
+          CONTAINER=$(docker run -d --rm --privileged \
+            --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$(pwd)/test-tui:/test-tui" \
+            roamie-test-stopped)
+          echo "Container: ${CONTAINER:0:12}"
+          sleep 3
+
+          echo "Checking state..."
+          docker exec "$CONTAINER" systemctl is-active ssh || echo "✓ ssh stopped (expected)"
+
+          echo "Running TUI test..."
+          docker exec "$CONTAINER" /test-tui || true
+
+          docker stop "$CONTAINER"
+
+      - name: Test scenario - No SSHD
+        run: |
+          echo "=== Testing scenario: No SSHD installed ==="
+          CONTAINER=$(docker run -d --rm --privileged \
+            --cgroupns=host \
+            -v /sys/fs/cgroup:/sys/fs/cgroup:rw \
+            -v "$(pwd)/test-tui:/test-tui" \
+            roamie-test-nosshd)
+          echo "Container: ${CONTAINER:0:12}"
+          sleep 3
+
+          echo "Checking state..."
+          docker exec "$CONTAINER" dpkg -l openssh-server 2>&1 | grep -q 'no packages found' && echo "✓ openssh not installed" || true
+
+          echo "Running TUI test..."
+          docker exec "$CONTAINER" /test-tui || true
+
+          docker stop "$CONTAINER"
