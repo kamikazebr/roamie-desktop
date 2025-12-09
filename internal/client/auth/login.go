@@ -8,6 +8,7 @@ import (
 
 	"github.com/kamikazebr/roamie-desktop/internal/client/api"
 	"github.com/kamikazebr/roamie-desktop/internal/client/config"
+	"github.com/kamikazebr/roamie-desktop/internal/client/sshd"
 	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
 	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
 	"github.com/kamikazebr/roamie-desktop/pkg/utils"
@@ -278,6 +279,18 @@ func autoSetupDaemon() {
 // autoRegisterTunnel registers the SSH tunnel key and allocates a port
 // Returns the allocated tunnel port on success
 func autoRegisterTunnel(cfg *config.Config) (int, error) {
+	// Pre-flight check: Ensure SSH daemon is available
+	fmt.Println("\n→ Checking SSH server availability...")
+	if !sshd.IsRunning() {
+		fmt.Println("⚠️  SSH server (sshd) is not running on this machine.")
+		fmt.Println("   The SSH tunnel requires sshd to accept incoming connections.")
+		fmt.Println()
+		fmt.Println(sshd.GetInstallInstructions())
+		fmt.Println()
+		return 0, fmt.Errorf("SSH server not available - install and start sshd, then run 'roamie tunnel register'")
+	}
+	fmt.Println("✓ SSH server is available")
+
 	fmt.Println("\n→ Registering SSH tunnel...")
 
 	// Create tunnel client to generate/load SSH key

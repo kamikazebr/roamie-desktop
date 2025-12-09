@@ -320,6 +320,127 @@ Test accounts are automatically cleaned up, but if needed:
 ssh root@178.156.133.88 "docker exec roamie-postgres psql -U roamie -d roamie_vpn -c \"DELETE FROM users WHERE email LIKE '%test%@example.com';\""
 ```
 
+## 3. TUI (Terminal User Interface) Testing
+
+### Overview
+
+The Roamie client includes a TUI built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) for interactive prompts. This is used for the SSH daemon (sshd) preflight check before tunnel registration.
+
+### Test Structure
+
+```
+scripts/
+├── test-tui.sh          # Quick test (default: no-sshd scenario)
+└── test-tui-all.sh      # Full test runner for all scenarios
+
+docker/test-tui/
+├── Dockerfile.no-sshd      # Ubuntu + systemd, SSH NOT installed
+├── Dockerfile.sshd-stopped # Ubuntu + systemd + SSH installed but stopped
+└── Dockerfile.sshd-running # Ubuntu + systemd + SSH installed and running
+```
+
+### Running Tests
+
+```bash
+# Quick test (SSH not installed scenario)
+./scripts/test-tui.sh
+
+# Specific scenario
+./scripts/test-tui.sh running    # SSH already running
+./scripts/test-tui.sh stopped    # SSH installed but stopped
+./scripts/test-tui.sh no-sshd    # SSH not installed
+
+# All scenarios sequentially
+./scripts/test-tui-all.sh all
+```
+
+### Test Scenarios
+
+| Scenario | Command | Expected Behavior |
+|----------|---------|-------------------|
+| `running` | `./scripts/test-tui.sh running` | Passes immediately, no TUI shown |
+| `stopped` | `./scripts/test-tui.sh stopped` | Shows "Iniciar serviço SSH agora" option |
+| `no-sshd` | `./scripts/test-tui.sh no-sshd` | Shows "Instalar e iniciar agora" option |
+
+### Test Binary
+
+The `test-tui` binary tests only the sshd preflight check without requiring authentication:
+
+```bash
+# Build the test binary
+go build -o test-tui ./cmd/test-tui
+
+# Run locally (will detect your system's sshd)
+./test-tui
+```
+
+### TUI Components
+
+| Component | Location | Description |
+|-----------|----------|-------------|
+| `ui.Select()` | `internal/client/ui/select.go` | Arrow-key menu selection |
+| `ui.Confirm()` | `internal/client/ui/confirm.go` | Yes/No confirmation |
+| `sshd.PromptInstall()` | `internal/client/sshd/preflight.go` | Main preflight flow |
+
+### Platform-Specific Preflight
+
+| Platform | File | Package Manager |
+|----------|------|-----------------|
+| Linux | `preflight_linux.go` | apt, dnf, pacman |
+| macOS | `preflight_darwin.go` | Remote Login (System Settings) |
+| Windows | `preflight_windows.go` | PowerShell (Add-WindowsCapability) |
+
+### TUI Output Examples
+
+#### Scenario 1: sshd Not Installed
+```
+⚠️  SSH server (sshd) is not running on this machine.
+
+OpenSSH server pode ser instalado automaticamente
+
+▸ Instalar e iniciar agora
+  Mostrar instruções manuais
+  Cancelar
+
+↑/↓ navegar • Enter selecionar • Esc cancelar
+```
+
+#### Scenario 2: sshd Installed but Not Running
+```
+⚠️  SSH server (sshd) is not running on this machine.
+
+OpenSSH está instalado mas não está rodando
+
+▸ Iniciar serviço SSH agora
+  Cancelar
+```
+
+#### Scenario 3: sshd Already Running
+```
+Testing SSHD Preflight TUI...
+
+✓ SSH check passed or user chose to continue
+```
+(No TUI shown - passes immediately)
+
+### Troubleshooting
+
+**TUI not rendering:**
+```bash
+# Ensure terminal supports TTY
+docker run -it --rm ubuntu:22.04 bash
+# The -it flags are required for TUI
+```
+
+**Container cleanup:**
+```bash
+# Remove test images
+docker rmi roamie-test-no-sshd roamie-test-sshd-stopped roamie-test-sshd-running
+
+# Remove dangling images
+docker image prune -f
+```
+
 ## Further Reading
 
 - [CIDR Notation Explained](../CLAUDE.md#cidr-notation)

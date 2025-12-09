@@ -14,6 +14,7 @@ import (
 	"github.com/kamikazebr/roamie-desktop/internal/client/config"
 	"github.com/kamikazebr/roamie-desktop/internal/client/daemon"
 	"github.com/kamikazebr/roamie-desktop/internal/client/ssh"
+	"github.com/kamikazebr/roamie-desktop/internal/client/sshd"
 	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
 	"github.com/kamikazebr/roamie-desktop/internal/client/upgrade"
 	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
@@ -711,7 +712,21 @@ func runTunnelRegister(cmd *cobra.Command, args []string) {
 		os.Exit(1)
 	}
 
-	fmt.Println("Registering SSH tunnel...")
+	// Pre-flight check: Ensure SSH daemon is available
+	fmt.Println("→ Checking SSH server availability...")
+	sshdAvailable, err := sshd.PromptInstall()
+	if err != nil {
+		fmt.Printf("Error: SSH check failed: %v\n", err)
+		os.Exit(1)
+	}
+	if !sshdAvailable {
+		fmt.Println("\nSSH server is required for the tunnel to work.")
+		fmt.Println("Please install and start SSH server, then try again.")
+		os.Exit(1)
+	}
+	fmt.Println("✓ SSH server is available")
+
+	fmt.Println("\nRegistering SSH tunnel...")
 
 	// Create tunnel client
 	tunnelClient, err := tunnel.NewClient(cfg)

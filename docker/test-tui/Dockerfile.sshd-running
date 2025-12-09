@@ -1,0 +1,25 @@
+# Ubuntu with systemd + openssh-server installed and RUNNING
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install systemd and openssh-server
+RUN apt-get update && apt-get install -y \
+    systemd \
+    systemd-sysv \
+    openssh-server \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Remove unnecessary systemd services (keep ssh enabled)
+RUN rm -f /lib/systemd/system/local-fs.target.wants/* \
+    /lib/systemd/system/sockets.target.wants/*udev* \
+    /lib/systemd/system/sockets.target.wants/*initctl* \
+    /lib/systemd/system/sysinit.target.wants/systemd-tmpfiles-setup* \
+    /lib/systemd/system/systemd-update-utmp*
+
+# Enable ssh service (will start automatically with systemd)
+RUN systemctl enable ssh
+
+VOLUME [ "/sys/fs/cgroup" ]
+CMD ["/lib/systemd/systemd"]

@@ -438,6 +438,12 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 				req.Reply(true, nil)
 			}
 
+		case "keepalive@roamie":
+			// Respond to client keepalive to maintain connection
+			if req.WantReply {
+				req.Reply(true, nil)
+			}
+
 		default:
 			log.Printf("Rejecting unsupported request type: %s", req.Type)
 			if req.WantReply {
