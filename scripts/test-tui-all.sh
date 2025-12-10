@@ -30,11 +30,9 @@ fi
 SCENARIO="${1:-all}"
 DOCKER_DIR="docker/test-tui"
 
-# Build test binary if needed
-if [ ! -f ./test-tui ]; then
-    echo "Building test-tui binary..."
-    go build -o test-tui ./cmd/test-tui
-fi
+# Always rebuild test binary to ensure latest code
+echo "Building test-tui binary..."
+go build -o test-tui ./cmd/test-tui
 
 run_test() {
     local name="$1"
