@@ -10,6 +10,7 @@ import (
 	"github.com/kamikazebr/roamie-desktop/internal/client/config"
 	"github.com/kamikazebr/roamie-desktop/internal/client/sshd"
 	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
+	"github.com/kamikazebr/roamie-desktop/internal/client/ui"
 	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
 	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 	"github.com/google/uuid"
@@ -25,16 +26,26 @@ func Login(serverURL string) error {
 	fmt.Println("Roamie VPN Client - Login")
 	fmt.Println("=========================")
 
-	// Pre-flight check: Ensure WireGuard is installed
-	fmt.Println("\n→ Checking WireGuard installation...")
-	installed, err := wireguard.PromptInstall()
+	// SSH Tunnel is always available - VPN is optional
+	fmt.Println("\n→ SSH Tunnel will be enabled automatically.")
+	fmt.Println("  VPN provides full network encryption but requires WireGuard.")
+
+	enableVPN, err := ui.Confirm("Also enable VPN? (You can install later with 'roamie vpn install')")
 	if err != nil {
-		return fmt.Errorf("WireGuard installation failed: %w", err)
+		enableVPN = false // Default to tunnel-only on cancel/error
 	}
-	if !installed {
-		return fmt.Errorf("WireGuard is required to continue. Please install it and try again")
+
+	if enableVPN {
+		fmt.Println("\n→ Checking WireGuard...")
+		installed, err := wireguard.PromptInstall()
+		if err != nil || !installed {
+			fmt.Println("⚠️  WireGuard not installed. Continuing with SSH Tunnel only.")
+			fmt.Println("   You can install VPN later: roamie vpn install")
+			enableVPN = false
+		} else {
+			fmt.Println("✓ WireGuard is available")
+		}
 	}
-	fmt.Println("✓ WireGuard is available")
 
 	// Generate device ID
 	deviceID := uuid.New()
@@ -91,7 +102,7 @@ func Login(serverURL string) error {
 	fmt.Println("Waiting for authorization...")
 
 	// Poll for approval with private key for auto-connection
-	return pollForApproval(client, challenge.ChallengeID, deviceID.String(), privateKey, publicKey, serverURL)
+	return pollForApproval(client, challenge.ChallengeID, deviceID.String(), privateKey, publicKey, serverURL, enableVPN)
 }
 
 func displayQRCode(data string) {
@@ -105,7 +116,7 @@ func displayQRCode(data string) {
 	fmt.Println(qr.ToSmallString(false))
 }
 
-func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publicKey, serverURL string) error {
+func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publicKey, serverURL string, enableVPN bool) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -138,8 +149,9 @@ func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publ
 					RefreshToken:    resp.RefreshToken,
 					ExpiresAt:       expiresAt,
 					CreatedAt:       time.Now(),
-					SSHSyncEnabled:  true,          // Enable SSH sync by default
-					SSHSyncInterval: 1 * time.Hour, // Default 1 hour interval
+					SSHSyncEnabled:  true,             // Enable SSH sync by default
+					SSHSyncInterval: 5 * time.Minute,  // Default 5 minute interval
+					VPNEnabled:      enableVPN,        // User's VPN choice
 				}
 
 				// Check if device was auto-registered and save device info
@@ -186,31 +198,31 @@ func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publ
 						}
 					}
 
-					// Check if running as root (with sudo)
-					if os.Geteuid() == 0 {
-						// Auto-connect to VPN when running with sudo
-						if err := autoConnectVPN(cfg); err != nil {
-							fmt.Printf("\n⚠️  Failed to auto-connect to VPN: %v\n", err)
-							fmt.Println("You can manually connect with: sudo roamie connect")
+					// VPN auto-connect only if user chose VPN mode
+					if enableVPN {
+						if os.Geteuid() == 0 {
+							// Auto-connect to VPN when running with sudo
+							if err := autoConnectVPN(cfg); err != nil {
+								fmt.Printf("\n⚠️  Failed to auto-connect to VPN: %v\n", err)
+								fmt.Println("You can manually connect with: sudo roamie connect")
+							}
+						} else {
+							// Show manual connection instructions when not using sudo
+							fmt.Println("\nVPN mode enabled. Next steps:")
+							fmt.Println("  • Connect to VPN: sudo roamie connect")
+							fmt.Println("  • Or manually: sudo wg-quick up roamie")
 						}
-						// Auto-setup daemon
-						autoSetupDaemon()
 					} else {
-						// Show manual connection instructions when not using sudo
-						fmt.Println("\nNext steps:")
-						fmt.Println("  • Connect to VPN: sudo roamie connect")
-						fmt.Println("  • Or manually: sudo wg-quick up roamie")
-						fmt.Println("  • Setup auto-refresh daemon: sudo roamie setup-daemon -y")
+						fmt.Println("\n✓ SSH Tunnel mode - VPN not enabled")
+						fmt.Println("  To enable VPN later: roamie vpn install")
 					}
+					// Always setup daemon (works without sudo for user systemd)
+					autoSetupDaemon()
 				} else {
-					// No auto-registration, but still setup daemon if running with sudo
-					if os.Geteuid() == 0 {
-						autoSetupDaemon()
-					} else {
-						fmt.Println("\nNext steps:")
-						fmt.Println("  1. Setup auto-refresh: sudo roamie setup-daemon -y")
-						fmt.Println("  2. Check status: roamie auth status")
-					}
+					// No auto-registration - still setup daemon
+					autoSetupDaemon()
+					fmt.Println("\nNext steps:")
+					fmt.Println("  1. Check status: roamie auth status")
 				}
 
 				return nil

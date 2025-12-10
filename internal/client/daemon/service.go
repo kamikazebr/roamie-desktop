@@ -60,14 +60,14 @@ Commands:
 
 	default: // Linux
 		return `
-Daemon setup on Linux uses systemd.
+Daemon setup on Linux uses systemd user service (starts on login).
 
 Commands:
   • Setup:     sudo roamie setup-daemon
-  • Status:    systemctl status roamie
-  • Logs:      journalctl -u roamie -f
-  • Stop:      sudo systemctl stop roamie
-  • Start:     sudo systemctl start roamie`
+  • Status:    systemctl --user status roamie
+  • Logs:      journalctl --user -u roamie -f
+  • Stop:      systemctl --user stop roamie
+  • Start:     systemctl --user start roamie`
 	}
 }
 

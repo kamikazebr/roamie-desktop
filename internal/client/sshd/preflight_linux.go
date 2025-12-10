@@ -135,45 +135,45 @@ func installSSHD(method string) error {
 
 	switch method {
 	case "apt":
-		fmt.Println("Instalando OpenSSH server via apt...")
+		fmt.Println("Installing OpenSSH server via apt...")
 		fmt.Println()
 		// Run apt update first
 		updateCmd := runCommand("apt", "update")
 		updateCmd.Stdout = os.Stdout
 		updateCmd.Stderr = os.Stderr
 		if err := updateCmd.Run(); err != nil {
-			return fmt.Errorf("falha ao atualizar apt: %w", err)
+			return fmt.Errorf("failed to update apt: %w", err)
 		}
 		cmd = runCommand("apt", "install", "-y", "openssh-server")
 
 	case "dnf":
-		fmt.Println("Instalando OpenSSH server via dnf...")
+		fmt.Println("Installing OpenSSH server via dnf...")
 		fmt.Println()
 		cmd = runCommand("dnf", "install", "-y", "openssh-server")
 
 	case "pacman":
-		fmt.Println("Instalando OpenSSH server via pacman...")
+		fmt.Println("Installing OpenSSH server via pacman...")
 		fmt.Println()
 		cmd = runCommand("pacman", "-S", "--noconfirm", "openssh")
 
 	default:
-		return fmt.Errorf("gerenciador de pacotes desconhecido: %s", method)
+		return fmt.Errorf("unknown package manager: %s", method)
 	}
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("falha ao instalar openssh-server: %w", err)
+		return fmt.Errorf("failed to install openssh-server: %w", err)
 	}
 
-	fmt.Println("\n✓ OpenSSH server instalado com sucesso!")
+	fmt.Println("\n✓ OpenSSH server installed successfully!")
 	return nil
 }
 
 // startSSHDService starts and enables the sshd service
 func startSSHDService() error {
-	fmt.Println("Iniciando serviço SSH...")
+	fmt.Println("Starting SSH service...")
 
 	// Determine service name (Debian uses 'ssh', others use 'sshd')
 	serviceName := "sshd"
@@ -186,7 +186,7 @@ func startSSHDService() error {
 	enableCmd.Stdout = os.Stdout
 	enableCmd.Stderr = os.Stderr
 	if err := enableCmd.Run(); err != nil {
-		fmt.Printf("Aviso: falha ao habilitar serviço: %v\n", err)
+		fmt.Printf("Warning: failed to enable service: %v\n", err)
 	}
 
 	// Start service
@@ -194,10 +194,10 @@ func startSSHDService() error {
 	startCmd.Stdout = os.Stdout
 	startCmd.Stderr = os.Stderr
 	if err := startCmd.Run(); err != nil {
-		return fmt.Errorf("falha ao iniciar sshd: %w", err)
+		return fmt.Errorf("failed to start sshd: %w", err)
 	}
 
-	fmt.Println("✓ Serviço SSH iniciado!")
+	fmt.Println("✓ SSH service started!")
 	return nil
 }
 
@@ -208,11 +208,11 @@ func promptInstallPlatform(result *PreflightResult) (bool, error) {
 	// Case 1: Installed but not running
 	if result.Installed && !result.Running {
 		options := []ui.SelectOption{
-			{Label: "Iniciar serviço SSH agora", Value: "start"},
-			{Label: "Cancelar", Value: "cancel"},
+			{Label: "Start SSH service now", Value: "start"},
+			{Label: "Cancel", Value: "cancel"},
 		}
 
-		selected, err := ui.Select("OpenSSH está instalado mas não está rodando", options)
+		selected, err := ui.Select("OpenSSH is installed but not running", options)
 		if err != nil {
 			return false, err
 		}
@@ -245,15 +245,15 @@ func promptInstallPlatform(result *PreflightResult) (bool, error) {
 
 		options := []ui.SelectOption{
 			{
-				Label:       "Instalar e iniciar agora",
+				Label:       "Install and start now",
 				Description: fmt.Sprintf("%s && %s", installCmd, startCmd),
 				Value:       "install",
 			},
-			{Label: "Mostrar instruções manuais", Value: "manual"},
-			{Label: "Cancelar", Value: "cancel"},
+			{Label: "Show manual instructions", Value: "manual"},
+			{Label: "Cancel", Value: "cancel"},
 		}
 
-		selected, err := ui.Select("OpenSSH server pode ser instalado automaticamente", options)
+		selected, err := ui.Select("OpenSSH server can be installed automatically", options)
 		if err != nil {
 			return false, err
 		}
@@ -279,11 +279,11 @@ func promptInstallPlatform(result *PreflightResult) (bool, error) {
 
 	// Case 3: Not installed, cannot auto-install
 	options := []ui.SelectOption{
-		{Label: "Mostrar instruções de instalação", Value: "show"},
-		{Label: "Cancelar", Value: "cancel"},
+		{Label: "Show installation instructions", Value: "show"},
+		{Label: "Cancel", Value: "cancel"},
 	}
 
-	selected, err := ui.Select("OpenSSH server não está instalado", options)
+	selected, err := ui.Select("OpenSSH server is not installed", options)
 	if err != nil {
 		return false, err
 	}
@@ -305,35 +305,35 @@ func getInstallInstructions() string {
 
 	switch method {
 	case "apt":
-		return `SSH server não está disponível.
+		return `SSH server is not available.
 
-Para instalar no Debian/Ubuntu:
+To install on Debian/Ubuntu:
   sudo apt install openssh-server
   sudo systemctl enable --now ssh`
 
 	case "dnf":
-		return `SSH server não está disponível.
+		return `SSH server is not available.
 
-Para instalar no Fedora/RHEL:
+To install on Fedora/RHEL:
   sudo dnf install openssh-server
   sudo systemctl enable --now sshd`
 
 	case "pacman":
-		return `SSH server não está disponível.
+		return `SSH server is not available.
 
-Para instalar no Arch Linux:
+To install on Arch Linux:
   sudo pacman -S openssh
   sudo systemctl enable --now sshd`
 
 	default:
-		return `SSH server não está disponível.
+		return `SSH server is not available.
 
-Para instalar no Linux:
+To install on Linux:
   Debian/Ubuntu: sudo apt install openssh-server
   Fedora/RHEL:   sudo dnf install openssh-server
   Arch Linux:    sudo pacman -S openssh
 
-Depois habilite e inicie o serviço:
+Then enable and start the service:
   sudo systemctl enable --now sshd`
 	}
 }

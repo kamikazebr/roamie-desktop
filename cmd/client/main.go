@@ -236,6 +236,29 @@ Example:
 var upgradeForce bool
 var upgradeNoRestart bool
 
+var vpnCmd = &cobra.Command{
+	Use:   "vpn",
+	Short: "VPN management commands",
+}
+
+var vpnInstallCmd = &cobra.Command{
+	Use:   "install",
+	Short: "Install WireGuard and enable VPN mode",
+	Long: `Install WireGuard and enable VPN mode.
+
+If you chose SSH Tunnel only during login, you can use this command
+to install WireGuard and enable VPN later.
+
+After installation, use 'roamie connect' to connect to the VPN.`,
+	Run: runVPNInstall,
+}
+
+var vpnStatusCmd = &cobra.Command{
+	Use:   "status",
+	Short: "Show VPN status",
+	Run:   runVPNStatus,
+}
+
 func init() {
 	setupDaemonCmd.Flags().BoolVarP(&setupDaemonYes, "yes", "y", false, "Skip confirmation prompt")
 	upgradeCmd.Flags().BoolVarP(&upgradeForce, "force", "f", false, "Force upgrade even if already on latest version")
@@ -244,7 +267,8 @@ func init() {
 	authCmd.AddCommand(loginCmd, daemonCmd, statusCmd, refreshCmd, logoutCmd)
 	sshCmd.AddCommand(sshSyncCmd, sshStatusCmd, sshEnableCmd, sshDisableCmd, sshSetIntervalCmd)
 	tunnelCmd.AddCommand(tunnelStartCmd, tunnelStopCmd, tunnelStatusCmd, tunnelRegisterCmd, tunnelDisableCmd, tunnelEnableCmd)
-	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd)
+	vpnCmd.AddCommand(vpnInstallCmd, vpnStatusCmd)
+	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, vpnCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd)
 }
 
 func main() {
@@ -1012,4 +1036,111 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 func isServiceRunning(name string) bool {
 	err := exec.Command("systemctl", "is-active", "--quiet", name).Run()
 	return err == nil
+}
+
+func runVPNInstall(cmd *cobra.Command, args []string) {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Error: Not logged in")
+		fmt.Println("Please run 'roamie auth login' first")
+		os.Exit(1)
+	}
+
+	// Check if VPN is already enabled
+	if cfg.VPNEnabled && wireguard.CheckInstalled() {
+		fmt.Println("✓ VPN is already enabled and WireGuard is installed")
+		fmt.Println("\nTo connect: sudo roamie connect")
+		return
+	}
+
+	fmt.Println("Installing WireGuard for VPN mode...")
+	fmt.Println()
+
+	// Try to install WireGuard
+	installed, err := wireguard.PromptInstall()
+	if err != nil {
+		fmt.Printf("Error: WireGuard installation failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	if !installed {
+		fmt.Println("WireGuard installation cancelled or failed")
+		os.Exit(1)
+	}
+
+	// Update config
+	cfg.VPNEnabled = true
+	if err := cfg.Save(); err != nil {
+		fmt.Printf("Error: Failed to save config: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("\n✓ VPN mode enabled!")
+	fmt.Println("\nNext steps:")
+	fmt.Println("  • Connect to VPN: sudo roamie connect")
+	fmt.Println("  • Check status: roamie vpn status")
+}
+
+func runVPNStatus(cmd *cobra.Command, args []string) {
+	// Load config
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	if cfg == nil {
+		fmt.Println("Status: Not logged in")
+		fmt.Println("\nRun 'roamie auth login' to authenticate")
+		return
+	}
+
+	fmt.Println("VPN Status")
+	fmt.Println("==========")
+
+	// VPN enabled in config?
+	if cfg.VPNEnabled {
+		fmt.Println("VPN Mode: Enabled")
+	} else {
+		fmt.Println("VPN Mode: Disabled (SSH Tunnel only)")
+		fmt.Println("\nTo enable VPN: roamie vpn install")
+		return
+	}
+
+	// WireGuard installed?
+	if wireguard.CheckInstalled() {
+		fmt.Println("WireGuard: Installed")
+	} else {
+		fmt.Println("WireGuard: Not installed")
+		fmt.Println("\nTo install: roamie vpn install")
+		return
+	}
+
+	// Device registered?
+	if cfg.VpnIP != "" {
+		fmt.Printf("VPN IP: %s\n", cfg.VpnIP)
+		fmt.Printf("Device: %s\n", cfg.DeviceName)
+	} else {
+		fmt.Println("Device: Not registered")
+	}
+
+	// Connection status (requires root)
+	if os.Geteuid() == 0 {
+		status, _ := wireguard.GetStatus("roamie")
+		if status != "" {
+			fmt.Println("\nConnection:")
+			fmt.Println(status)
+		} else {
+			fmt.Println("\nConnection: Disconnected")
+			fmt.Println("  Connect with: sudo roamie connect")
+		}
+	} else {
+		fmt.Println("\n(Run with sudo to see connection status)")
+	}
 }

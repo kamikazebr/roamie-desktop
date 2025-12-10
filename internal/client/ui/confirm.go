@@ -49,8 +49,8 @@ func NewConfirm(title string, opts ...ConfirmOption) ConfirmModel {
 	m := ConfirmModel{
 		title:    title,
 		cursor:   0, // Default to Yes
-		yesLabel: "Sim",
-		noLabel:  "Não",
+		yesLabel: "Yes",
+		noLabel:  "No",
 	}
 
 	for _, opt := range opts {
@@ -142,7 +142,7 @@ func (m ConfirmModel) View() string {
 
 	// Help
 	b.WriteString("\n")
-	b.WriteString(HelpStyle.Render("←/→ navegar • Enter confirmar • y/n atalho • Esc cancelar"))
+	b.WriteString(HelpStyle.Render("←/→ navigate • Enter confirm • y/n shortcut • Esc cancel"))
 
 	return b.String()
 }

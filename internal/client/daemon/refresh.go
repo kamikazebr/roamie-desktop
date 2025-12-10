@@ -33,8 +33,8 @@ func Run(ctx context.Context) error {
 		log.Printf("Warning: failed to load config: %v", err)
 	}
 
-	// SSH sync ticker (configurable interval, default 1 hour)
-	sshInterval := 1 * time.Hour
+	// SSH sync ticker (configurable interval, default 5 minutes)
+	sshInterval := 5 * time.Minute
 	if cfg != nil && cfg.SSHSyncInterval > 0 {
 		sshInterval = cfg.SSHSyncInterval
 	}

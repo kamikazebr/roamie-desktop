@@ -104,7 +104,7 @@ func (m SelectModel) View() string {
 
 	// Help
 	b.WriteString("\n")
-	b.WriteString(HelpStyle.Render("↑/↓ navegar • Enter selecionar • Esc cancelar"))
+	b.WriteString(HelpStyle.Render("↑/↓ navigate • Enter select • Esc cancel"))
 
 	return b.String()
 }

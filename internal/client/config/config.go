@@ -49,6 +49,9 @@ type Config struct {
 	// SSH Tunnel Configuration
 	TunnelEnabled bool `json:"tunnel_enabled"`
 	TunnelPort    int  `json:"tunnel_port,omitempty"`
+
+	// VPN Configuration (optional, user can opt-in)
+	VPNEnabled bool `json:"vpn_enabled"`
 }
 
 // DefaultConfig returns a config with default values

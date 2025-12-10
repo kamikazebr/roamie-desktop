@@ -46,8 +46,8 @@ func isSSHDServiceRunning() bool {
 
 // enableSSHDService enables Remote Login (SSH) on macOS
 func enableSSHDService() error {
-	fmt.Println("Habilitando Remote Login (SSH)...")
-	fmt.Println("Executando: sudo systemsetup -setremotelogin on")
+	fmt.Println("Enabling Remote Login (SSH)...")
+	fmt.Println("Running: sudo systemsetup -setremotelogin on")
 	fmt.Println()
 
 	cmd := exec.Command("sudo", "systemsetup", "-setremotelogin", "on")
@@ -55,10 +55,10 @@ func enableSSHDService() error {
 	cmd.Stderr = os.Stderr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("falha ao habilitar Remote Login: %w", err)
+		return fmt.Errorf("failed to enable Remote Login: %w", err)
 	}
 
-	fmt.Println("✓ Remote Login (SSH) habilitado!")
+	fmt.Println("✓ Remote Login (SSH) enabled!")
 	return nil
 }
 
@@ -66,19 +66,19 @@ func enableSSHDService() error {
 func promptInstallPlatform(result *PreflightResult) (bool, error) {
 	options := []ui.SelectOption{
 		{
-			Label:       "Habilitar SSH via linha de comando",
+			Label:       "Enable SSH via command line",
 			Description: "sudo systemsetup -setremotelogin on",
 			Value:       "enable",
 		},
 		{
-			Label:       "Mostrar instruções manuais",
+			Label:       "Show manual instructions",
 			Description: "System Preferences > Sharing > Remote Login",
 			Value:       "manual",
 		},
-		{Label: "Cancelar", Value: "cancel"},
+		{Label: "Cancel", Value: "cancel"},
 	}
 
-	selected, err := ui.Select("SSH está instalado mas precisa ser habilitado", options)
+	selected, err := ui.Select("SSH is installed but needs to be enabled", options)
 	if err != nil {
 		return false, err
 	}
@@ -86,7 +86,7 @@ func promptInstallPlatform(result *PreflightResult) (bool, error) {
 	switch selected {
 	case 0: // Enable
 		if err := enableSSHDService(); err != nil {
-			fmt.Printf("\n   Falha ao habilitar SSH: %v\n", err)
+			fmt.Printf("\n   Failed to enable SSH: %v\n", err)
 			fmt.Println()
 			fmt.Println(getInstallInstructions())
 			return false, nil
@@ -106,15 +106,15 @@ func promptInstallPlatform(result *PreflightResult) (bool, error) {
 
 // getInstallInstructions returns macOS-specific installation instructions
 func getInstallInstructions() string {
-	return `SSH server não está habilitado.
+	return `SSH server is not enabled.
 
-No macOS, SSH está instalado mas precisa ser habilitado:
+On macOS, SSH is installed but needs to be enabled:
 
-Opção 1 - Linha de comando:
+Option 1 - Command line:
   sudo systemsetup -setremotelogin on
 
-Opção 2 - System Preferences:
-  1. Abra System Preferences
-  2. Vá em Sharing
-  3. Marque 'Remote Login'`
+Option 2 - System Preferences:
+  1. Open System Preferences
+  2. Go to Sharing
+  3. Check 'Remote Login'`
 }

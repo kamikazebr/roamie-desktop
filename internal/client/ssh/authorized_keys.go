@@ -2,9 +2,11 @@ package ssh
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -180,7 +182,8 @@ func (m *AuthorizedKeysManager) UpdateRoamieKeys(newRoamieKeys []string) (added 
 	return added, removed, nil
 }
 
-// createBackup creates a timestamped backup of authorized_keys
+// createBackup creates a backup only if content changed
+// Also rotates old backups, keeping only the last 5
 func (m *AuthorizedKeysManager) createBackup() error {
 	// Check if file exists
 	if _, err := os.Stat(m.filePath); os.IsNotExist(err) {
@@ -188,15 +191,40 @@ func (m *AuthorizedKeysManager) createBackup() error {
 		return nil
 	}
 
-	timestamp := time.Now().Format("20060102-150405")
-	backupPath := fmt.Sprintf("%s.backup.%s", m.filePath, timestamp)
-
-	content, err := os.ReadFile(m.filePath)
+	currentContent, err := os.ReadFile(m.filePath)
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(backupPath, content, 0600)
+	// Find latest backup and compare content
+	backups, _ := filepath.Glob(m.filePath + ".backup.*")
+	if len(backups) > 0 {
+		sort.Strings(backups)
+		latestBackup := backups[len(backups)-1]
+		latestContent, err := os.ReadFile(latestBackup)
+		if err == nil && bytes.Equal(currentContent, latestContent) {
+			// Content unchanged, skip backup
+			return nil
+		}
+	}
+
+	// Create new backup
+	timestamp := time.Now().Format("20060102-150405")
+	backupPath := fmt.Sprintf("%s.backup.%s", m.filePath, timestamp)
+	if err := os.WriteFile(backupPath, currentContent, 0600); err != nil {
+		return err
+	}
+
+	// Rotate: keep only last 5 backups
+	backups, _ = filepath.Glob(m.filePath + ".backup.*")
+	if len(backups) > 5 {
+		sort.Strings(backups)
+		for _, old := range backups[:len(backups)-5] {
+			os.Remove(old)
+		}
+	}
+
+	return nil
 }
 
 // diffKeys calculates which keys were added and removed
