@@ -25,8 +25,8 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "roamie",
-	Short: "Roamie VPN Client - Device Authentication",
-	Long:  "CLI tool for managing Roamie VPN device authentication and JWT tokens",
+	Short: "Roamie Desktop - Device Authentication",
+	Long:  "CLI tool for managing Roamie Desktop device authentication and JWT tokens",
 }
 
 var authCmd = &cobra.Command{
@@ -321,7 +321,7 @@ func runStatus(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	fmt.Println("Roamie VPN Client - Status")
+	fmt.Printf("Roamie Desktop %s - Status\n", version.Version)
 	fmt.Println("==========================")
 	fmt.Printf("Server:       %s\n", cfg.ServerURL)
 	fmt.Printf("Device ID:    %s\n", cfg.DeviceID)

@@ -34,7 +34,7 @@ func setupServicePlatform(cfg ServiceConfig, autoYes bool) error {
 	userServicePath := getUserServicePath(cfg.HomeDir)
 
 	serviceContent := fmt.Sprintf(`[Unit]
-Description=Roamie VPN Client Auth Refresh Daemon
+Description=Roamie Desktop Auth Refresh Daemon
 After=network-online.target
 Wants=network-online.target
 

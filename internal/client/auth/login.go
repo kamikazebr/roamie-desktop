@@ -13,6 +13,7 @@ import (
 	"github.com/kamikazebr/roamie-desktop/internal/client/ui"
 	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
 	"github.com/kamikazebr/roamie-desktop/pkg/utils"
+	"github.com/kamikazebr/roamie-desktop/pkg/version"
 	"github.com/google/uuid"
 	"github.com/skip2/go-qrcode"
 )
@@ -23,7 +24,7 @@ func Login(serverURL string) error {
 		serverURL = "http://10.100.0.1:8081"
 	}
 
-	fmt.Println("Roamie VPN Client - Login")
+	fmt.Printf("Roamie Desktop %s\n", version.Version)
 	fmt.Println("=========================")
 
 	// SSH Tunnel is always available - VPN is optional

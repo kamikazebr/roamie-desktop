@@ -75,7 +75,7 @@ func (m ConfirmModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		case "left", "h", "right", "l", "tab":
+		case "up", "k", "down", "j", "tab":
 			// Toggle between Yes and No
 			m.cursor = 1 - m.cursor
 
@@ -142,7 +142,7 @@ func (m ConfirmModel) View() string {
 
 	// Help
 	b.WriteString("\n")
-	b.WriteString(HelpStyle.Render("←/→ navigate • Enter confirm • y/n shortcut • Esc cancel"))
+	b.WriteString(HelpStyle.Render("↑/↓ navigate • Enter confirm • y/n shortcut • Esc cancel"))
 
 	return b.String()
 }
