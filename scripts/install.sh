@@ -161,10 +161,10 @@ main() {
 
     if [ ! -w "$INSTALL_DIR" ]; then
         warn "Need sudo to install to ${INSTALL_DIR}"
-        sudo mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
+        sudo mv -f "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
         sudo chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     else
-        mv "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
+        mv -f "$TMP_FILE" "${INSTALL_DIR}/${BINARY_NAME}"
         chmod +x "${INSTALL_DIR}/${BINARY_NAME}"
     fi
 
