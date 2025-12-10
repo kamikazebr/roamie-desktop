@@ -55,6 +55,30 @@ get_latest_version() {
         sed -E 's/.*"([^"]+)".*/\1/'
 }
 
+# Check if roamie is installed
+is_roamie_installed() {
+    command -v roamie &> /dev/null
+}
+
+# Check if update is available using roamie's built-in check
+# Returns 0 if update available, 1 if up-to-date
+check_update_available() {
+    roamie upgrade check 2>&1 | grep -q "new version is available"
+}
+
+# Ask user for reinstall (handles non-TTY gracefully)
+ask_reinstall() {
+    # Check if running interactively
+    if [ -t 0 ]; then
+        read -p "Do you want to reinstall anyway? (y/n) " -n 1 -r
+        echo
+        [[ $REPLY =~ ^[Yy]$ ]]
+    else
+        # Non-interactive mode (curl | bash) - skip reinstall
+        return 1
+    fi
+}
+
 main() {
     echo ""
     echo "  ██████╗  ██████╗  █████╗ ███╗   ███╗██╗███████╗"
@@ -88,6 +112,32 @@ main() {
     fi
 
     info "Latest version: ${VERSION}"
+
+    # Check for existing installation
+    if is_roamie_installed; then
+        INSTALLED_VERSION=$(roamie version 2>/dev/null | head -1 | sed 's/^roamie //')
+        info "Installed version: ${INSTALLED_VERSION}"
+
+        # Use roamie's built-in upgrade check (compares version, commit, timestamp)
+        if check_update_available; then
+            info "Upgrading to ${VERSION}..."
+        else
+            echo ""
+            echo -e "${GREEN}✓ You already have the latest version installed!${NC}"
+            echo ""
+
+            if ask_reinstall; then
+                info "Reinstalling ${VERSION}..."
+            else
+                echo "Get started:"
+                echo "  roamie auth login"
+                echo ""
+                exit 0
+            fi
+        fi
+    else
+        info "Installing Roamie ${VERSION}..."
+    fi
 
     # Build download URL
     FILENAME="${BINARY_NAME}-${OS}-${ARCH}"
@@ -126,7 +176,7 @@ main() {
         roamie version
         echo ""
         echo "Get started:"
-        echo "  sudo roamie auth login"
+        echo "  roamie auth login"
         echo ""
     else
         warn "Installed but 'roamie' not in PATH. You may need to add ${INSTALL_DIR} to your PATH."
