@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 type WireGuardConfig struct {
@@ -18,22 +19,27 @@ type WireGuardConfig struct {
 }
 
 func GenerateConfigFile(config WireGuardConfig) string {
-	dns := config.DNS
-	if dns == "" {
-		dns = "1.1.1.1, 8.8.8.8"
+	// Only set DNS for full tunnel (0.0.0.0/0)
+	// Split tunnel uses system DNS which avoids systemd-resolved conflicts on Ubuntu
+	dnsLine := ""
+	if strings.Contains(config.AllowedIPs, "0.0.0.0/0") {
+		dns := config.DNS
+		if dns == "" {
+			dns = "1.1.1.1, 8.8.8.8"
+		}
+		dnsLine = fmt.Sprintf("DNS = %s\n", dns)
 	}
 
 	return fmt.Sprintf(`[Interface]
 PrivateKey = %s
 Address = %s/32
-DNS = %s
-
+%s
 [Peer]
 PublicKey = %s
 Endpoint = %s
 AllowedIPs = %s
 PersistentKeepalive = 25
-`, config.PrivateKey, config.Address, dns, config.ServerKey, config.Endpoint, config.AllowedIPs)
+`, config.PrivateKey, config.Address, dnsLine, config.ServerKey, config.Endpoint, config.AllowedIPs)
 }
 
 // getWireGuardConfigDir returns the WireGuard configuration directory for the current platform
