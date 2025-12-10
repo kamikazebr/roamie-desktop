@@ -27,25 +27,47 @@ func Login(serverURL string) error {
 	fmt.Printf("Roamie Desktop %s\n", version.Version)
 	fmt.Println("=========================")
 
-	// SSH Tunnel is always available - VPN is optional
-	fmt.Println("\n→ SSH Tunnel will be enabled automatically.")
-	fmt.Println("  VPN provides full network encryption but requires WireGuard.")
+	// Check if WireGuard is already installed
+	var enableVPN bool
+	if wireguard.CheckInstalled() {
+		fmt.Println("\n✓ WireGuard is installed - VPN will be enabled")
+		enableVPN = true
+	} else {
+		// WireGuard not installed - ask user if they want to install it
+		fmt.Println("\n→ SSH Tunnel will be enabled automatically.")
+		fmt.Println("  VPN provides full network encryption but requires WireGuard.")
 
-	enableVPN, err := ui.Confirm("Also enable VPN? (You can install later with 'roamie vpn install')")
-	if err != nil {
-		enableVPN = false // Default to tunnel-only on cancel/error
+		wantVPN, err := ui.Confirm("Also enable VPN? (You can install later with 'roamie vpn install')")
+		if err != nil {
+			wantVPN = false // Default to tunnel-only on cancel/error
+		}
+
+		if wantVPN {
+			fmt.Println("\n→ Installing WireGuard...")
+			installed, err := wireguard.PromptInstall()
+			if err != nil || !installed {
+				fmt.Println("⚠️  WireGuard not installed. Continuing with SSH Tunnel only.")
+				fmt.Println("   You can install VPN later: roamie vpn install")
+				enableVPN = false
+			} else {
+				fmt.Println("✓ WireGuard is available")
+				enableVPN = true
+			}
+		}
 	}
 
-	if enableVPN {
-		fmt.Println("\n→ Checking WireGuard...")
-		installed, err := wireguard.PromptInstall()
-		if err != nil || !installed {
-			fmt.Println("⚠️  WireGuard not installed. Continuing with SSH Tunnel only.")
-			fmt.Println("   You can install VPN later: roamie vpn install")
-			enableVPN = false
-		} else {
-			fmt.Println("✓ WireGuard is available")
-		}
+	// Check SSH server availability (for tunnel)
+	fmt.Println("\n→ Checking SSH server availability...")
+	enableSSHTunnel, err := sshd.PromptInstall()
+	if err != nil {
+		fmt.Printf("⚠️  SSH check error: %v\n", err)
+		enableSSHTunnel = false
+	}
+	if enableSSHTunnel {
+		fmt.Println("✓ SSH server is available")
+	} else {
+		fmt.Println("⚠️  SSH server not available. SSH tunnel will be skipped.")
+		fmt.Println("   You can enable it later with: roamie tunnel register")
 	}
 
 	// Generate device ID
@@ -103,7 +125,7 @@ func Login(serverURL string) error {
 	fmt.Println("Waiting for authorization...")
 
 	// Poll for approval with private key for auto-connection
-	return pollForApproval(client, challenge.ChallengeID, deviceID.String(), privateKey, publicKey, serverURL, enableVPN)
+	return pollForApproval(client, challenge.ChallengeID, deviceID.String(), privateKey, publicKey, serverURL, enableVPN, enableSSHTunnel)
 }
 
 func displayQRCode(data string) {
@@ -117,7 +139,7 @@ func displayQRCode(data string) {
 	fmt.Println(qr.ToSmallString(false))
 }
 
-func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publicKey, serverURL string, enableVPN bool) error {
+func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publicKey, serverURL string, enableVPN, enableSSHTunnel bool) error {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
@@ -184,19 +206,24 @@ func pollForApproval(client *api.Client, challengeID, deviceID, privateKey, publ
 					fmt.Printf("  Device Name: %s\n", resp.Device.DeviceName)
 					fmt.Printf("  VPN IP: %s\n", resp.Device.VpnIP)
 
-					// Auto-register SSH tunnel
-					tunnelPort, err := autoRegisterTunnel(cfg)
-					if err != nil {
-						fmt.Printf("\n⚠️  Failed to register SSH tunnel: %v\n", err)
-						fmt.Println("You can manually register with: roamie tunnel register")
-					} else {
-						cfg.TunnelEnabled = true
-						cfg.TunnelPort = tunnelPort
-						if err := cfg.Save(); err != nil {
-							fmt.Printf("⚠️  Failed to save tunnel config: %v\n", err)
+					// Auto-register SSH tunnel (only if SSH was available during preflight)
+					if enableSSHTunnel {
+						tunnelPort, err := autoRegisterTunnel(cfg)
+						if err != nil {
+							fmt.Printf("\n⚠️  Failed to register SSH tunnel: %v\n", err)
+							fmt.Println("You can manually register with: roamie tunnel register")
 						} else {
-							fmt.Printf("✓ SSH tunnel registered (port %d)\n", tunnelPort)
+							cfg.TunnelEnabled = true
+							cfg.TunnelPort = tunnelPort
+							if err := cfg.Save(); err != nil {
+								fmt.Printf("⚠️  Failed to save tunnel config: %v\n", err)
+							} else {
+								fmt.Printf("✓ SSH tunnel registered (port %d)\n", tunnelPort)
+							}
 						}
+					} else {
+						fmt.Println("\n→ SSH tunnel skipped (SSH server not available)")
+						fmt.Println("  Enable later with: roamie tunnel register")
 					}
 
 					// VPN auto-connect only if user chose VPN mode
@@ -291,19 +318,8 @@ func autoSetupDaemon() {
 
 // autoRegisterTunnel registers the SSH tunnel key and allocates a port
 // Returns the allocated tunnel port on success
+// Note: SSH availability should be checked before calling this function
 func autoRegisterTunnel(cfg *config.Config) (int, error) {
-	// Pre-flight check: Ensure SSH daemon is available
-	fmt.Println("\n→ Checking SSH server availability...")
-	if !sshd.IsRunning() {
-		fmt.Println("⚠️  SSH server (sshd) is not running on this machine.")
-		fmt.Println("   The SSH tunnel requires sshd to accept incoming connections.")
-		fmt.Println()
-		fmt.Println(sshd.GetInstallInstructions())
-		fmt.Println()
-		return 0, fmt.Errorf("SSH server not available - install and start sshd, then run 'roamie tunnel register'")
-	}
-	fmt.Println("✓ SSH server is available")
-
 	fmt.Println("\n→ Registering SSH tunnel...")
 
 	// Create tunnel client to generate/load SSH key
