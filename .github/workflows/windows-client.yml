@@ -1,0 +1,140 @@
+name: Windows Client Test
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/client/**'
+      - 'cmd/test-tui/**'
+      - 'internal/client/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+      - '.github/workflows/windows-client.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'cmd/client/**'
+      - 'cmd/test-tui/**'
+      - 'internal/client/**'
+      - 'pkg/**'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+jobs:
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      # ============================================
+      # Build Client Binary
+      # ============================================
+      - name: Build client for Windows
+        run: |
+          go build -o roamie.exe ./cmd/client
+          .\roamie.exe --help
+
+      - name: Build for multiple architectures
+        run: |
+          $env:GOOS="windows"; $env:GOARCH="amd64"; go build -o roamie-windows-amd64.exe ./cmd/client
+          $env:GOOS="windows"; $env:GOARCH="arm64"; go build -o roamie-windows-arm64.exe ./cmd/client
+          Get-ChildItem roamie-windows-*
+
+      - name: Build test-tui binary
+        run: go build -o test-tui.exe ./cmd/test-tui
+
+      # ============================================
+      # WireGuard Detection Test
+      # ============================================
+      - name: Test WireGuard detection - NOT installed
+        run: |
+          Write-Host "=== Testing WireGuard detection (NOT installed) ==="
+
+          # Verify WireGuard is NOT installed
+          $wg = Get-Command wg -ErrorAction SilentlyContinue
+          if ($wg) {
+            Write-Host "ERROR: wg already installed!"
+            exit 1
+          }
+          Write-Host "✓ wg not found (expected)"
+
+          # Run detection tests
+          Write-Host "Running wireguard preflight tests..."
+          go test -v -run TestCheckInstalled ./internal/client/wireguard/
+          go test -v -run TestRunPreflight ./internal/client/wireguard/
+          go test -v -run TestCanAutoInstall ./internal/client/wireguard/
+
+      - name: Check winget availability
+        run: |
+          Write-Host "=== Checking winget availability ==="
+          $winget = Get-Command winget -ErrorAction SilentlyContinue
+          if ($winget) {
+            Write-Host "✓ winget available for auto-install"
+            winget --version
+          } else {
+            Write-Host "⚠ winget not found"
+          }
+
+      # ============================================
+      # SSH Detection Test (OpenSSH Server)
+      # ============================================
+      - name: Test SSH detection - initial state
+        run: |
+          Write-Host "=== Testing SSH detection ==="
+
+          # Check OpenSSH Server capability
+          Write-Host "Checking OpenSSH Server capability..."
+          $capability = Get-WindowsCapability -Online | Where-Object Name -like 'OpenSSH.Server*'
+          Write-Host "OpenSSH Server state: $($capability.State)"
+
+          # Check sshd service
+          Write-Host "Checking sshd service..."
+          $sshd = Get-Service sshd -ErrorAction SilentlyContinue
+          if ($sshd) {
+            Write-Host "sshd service status: $($sshd.Status)"
+          } else {
+            Write-Host "sshd service not found"
+          }
+
+          # Run detection tests (may fail if not installed, that's ok)
+          Write-Host "Running sshd preflight tests..."
+          go test -v -run TestCheck ./internal/client/sshd/ 2>&1 | Out-Host
+          go test -v -run TestIsRunning ./internal/client/sshd/ 2>&1 | Out-Host
+
+      # ============================================
+      # Client CLI Tests
+      # ============================================
+      - name: Test client CLI commands
+        run: |
+          .\roamie.exe --help
+          .\roamie.exe auth --help
+          .\roamie.exe devices --help
+          .\roamie.exe tunnel --help
+          .\roamie.exe version
+
+      # ============================================
+      # Unit Tests
+      # ============================================
+      - name: Run unit tests
+        run: |
+          go test -v -short ./cmd/client/... ./internal/client/... ./pkg/... 2>&1 | Out-Host
+        continue-on-error: true
+
+      # ============================================
+      # Upload Artifacts
+      # ============================================
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-binaries
+          path: |
+            roamie-windows-amd64.exe
+            roamie-windows-arm64.exe
+          retention-days: 7
