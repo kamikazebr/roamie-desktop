@@ -6,6 +6,8 @@ import (
 	"os"
 	"os/user"
 	"path/filepath"
+
+	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 )
 
 type Credentials struct {
@@ -53,7 +55,7 @@ func getConfigDir() (string, error) {
 	}
 
 	configDir := filepath.Join(home, ".roamie-vpn")
-	if err := os.MkdirAll(configDir, 0700); err != nil {
+	if err := utils.MkdirAllWithOwnership(configDir, 0700); err != nil {
 		return "", err
 	}
 	return configDir, nil
@@ -71,7 +73,7 @@ func SaveCredentials(creds *Credentials) error {
 		return err
 	}
 
-	return os.WriteFile(filePath, data, 0600)
+	return utils.WriteFileWithOwnership(filePath, data, 0600)
 }
 
 func LoadCredentials() (*Credentials, error) {
@@ -118,7 +120,7 @@ func SaveDeviceInfo(device *DeviceInfo) error {
 	}
 
 	devicesDir := filepath.Join(configDir, "devices")
-	if err := os.MkdirAll(devicesDir, 0700); err != nil {
+	if err := utils.MkdirAllWithOwnership(devicesDir, 0700); err != nil {
 		return err
 	}
 
@@ -128,7 +130,7 @@ func SaveDeviceInfo(device *DeviceInfo) error {
 		return err
 	}
 
-	return os.WriteFile(filePath, data, 0600)
+	return utils.WriteFileWithOwnership(filePath, data, 0600)
 }
 
 func LoadDeviceInfo(deviceID string) (*DeviceInfo, error) {

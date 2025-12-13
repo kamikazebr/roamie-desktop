@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 )
 
 const (
@@ -29,15 +31,15 @@ func setupServicePlatform(cfg ServiceConfig, autoYes bool) error {
 	plistPath := getLaunchdPlistPath(cfg.HomeDir)
 	logPath := getLogPath(cfg.HomeDir)
 
-	// Ensure LaunchAgents directory exists
+	// Ensure LaunchAgents directory exists (with correct ownership)
 	launchAgentsDir := filepath.Dir(plistPath)
-	if err := os.MkdirAll(launchAgentsDir, 0755); err != nil {
+	if err := utils.MkdirAllWithOwnership(launchAgentsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create LaunchAgents directory: %w", err)
 	}
 
-	// Ensure Logs directory exists
+	// Ensure Logs directory exists (with correct ownership)
 	logsDir := filepath.Dir(logPath)
-	if err := os.MkdirAll(logsDir, 0755); err != nil {
+	if err := utils.MkdirAllWithOwnership(logsDir, 0755); err != nil {
 		return fmt.Errorf("failed to create Logs directory: %w", err)
 	}
 
@@ -88,7 +90,7 @@ func setupServicePlatform(cfg ServiceConfig, autoYes bool) error {
 		exec.Command("launchctl", "unload", plistPath).Run()
 	}
 
-	if err := os.WriteFile(plistPath, []byte(plistContent), 0644); err != nil {
+	if err := utils.WriteFileWithOwnership(plistPath, []byte(plistContent), 0644); err != nil {
 		return fmt.Errorf("failed to create plist file: %w", err)
 	}
 	fmt.Println("✓ Plist file created")

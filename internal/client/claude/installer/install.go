@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 )
 
 // InstallHooks installs Claude Code hooks into settings.json
@@ -52,10 +54,10 @@ func InstallHooks(settingsPath, roamiePath string) error {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	// Create directory if needed
-	if err := os.MkdirAll(filepath.Dir(settingsPath), 0755); err != nil {
+	// Create directory if needed (with correct ownership)
+	if err := utils.MkdirAllWithOwnership(filepath.Dir(settingsPath), 0755); err != nil {
 		return fmt.Errorf("failed to create directory: %w", err)
 	}
 
-	return os.WriteFile(settingsPath, data, 0644)
+	return utils.WriteFileWithOwnership(settingsPath, data, 0644)
 }

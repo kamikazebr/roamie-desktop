@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 )
 
 // UninstallHooks removes Claude Code hooks from settings.json
@@ -31,5 +33,5 @@ func UninstallHooks(settingsPath string) error {
 		return fmt.Errorf("failed to marshal settings: %w", err)
 	}
 
-	return os.WriteFile(settingsPath, data, 0644)
+	return utils.WriteFileWithOwnership(settingsPath, data, 0644)
 }

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"time"
+
+	"github.com/kamikazebr/roamie-desktop/pkg/utils"
 )
 
 // BackupSettings creates a backup of the settings.json file
@@ -25,7 +27,7 @@ func BackupSettings(settingsPath string) string {
 		return ""
 	}
 
-	if err := os.WriteFile(backupPath, data, 0644); err != nil {
+	if err := utils.WriteFileWithOwnership(backupPath, data, 0644); err != nil {
 		return ""
 	}
 
@@ -51,5 +53,5 @@ func RestoreFromBackup(backupPath, settingsPath string) error {
 		return fmt.Errorf("failed to read backup: %w", err)
 	}
 
-	return os.WriteFile(settingsPath, data, 0644)
+	return utils.WriteFileWithOwnership(settingsPath, data, 0644)
 }

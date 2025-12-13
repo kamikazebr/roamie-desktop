@@ -61,13 +61,13 @@ WantedBy=default.target`, cfg.ExePath)
 		}
 	}
 
-	// Create user systemd directory if it doesn't exist
-	if err := os.MkdirAll(userServiceDir, 0755); err != nil {
+	// Create user systemd directory if it doesn't exist (with correct ownership)
+	if err := utils.MkdirAllWithOwnership(userServiceDir, 0755); err != nil {
 		return fmt.Errorf("failed to create systemd user directory: %w", err)
 	}
 
-	// Write service file
-	if err := os.WriteFile(userServicePath, []byte(serviceContent), 0644); err != nil {
+	// Write service file (with correct ownership)
+	if err := utils.WriteFileWithOwnership(userServicePath, []byte(serviceContent), 0644); err != nil {
 		return fmt.Errorf("failed to create service file: %w", err)
 	}
 	fmt.Printf("✓ Service file created: %s\n", userServicePath)

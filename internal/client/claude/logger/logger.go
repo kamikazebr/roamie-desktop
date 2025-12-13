@@ -30,7 +30,7 @@ func Init() error {
 	}
 
 	logDir := filepath.Join(homeDir, ".roamie", "logs")
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := utils.MkdirAllWithOwnership(logDir, 0755); err != nil {
 		return fmt.Errorf("failed to create log directory: %w", err)
 	}
 
@@ -41,8 +41,8 @@ func Init() error {
 		return fmt.Errorf("failed to rotate logs: %w", err)
 	}
 
-	// Abre arquivo fixo
-	f, err := os.OpenFile(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Abre arquivo fixo (with correct ownership)
+	f, err := utils.OpenFileWithOwnership(logFilePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}

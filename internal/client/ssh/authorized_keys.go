@@ -114,9 +114,9 @@ func (m *AuthorizedKeysManager) WriteKeys(roamieKeys []string, otherKeys []strin
 		return fmt.Errorf("failed to create backup: %w", err)
 	}
 
-	// Create .ssh directory if it doesn't exist
+	// Create .ssh directory if it doesn't exist (with correct ownership)
 	sshDir := filepath.Dir(m.filePath)
-	if err := os.MkdirAll(sshDir, 0700); err != nil {
+	if err := utils.MkdirAllWithOwnership(sshDir, 0700); err != nil {
 		return fmt.Errorf("failed to create .ssh directory: %w", err)
 	}
 
@@ -143,9 +143,9 @@ func (m *AuthorizedKeysManager) WriteKeys(roamieKeys []string, otherKeys []strin
 		content += "\n" // Ensure trailing newline
 	}
 
-	// Write to temporary file first (atomic write)
+	// Write to temporary file first (atomic write, with correct ownership)
 	tmpFile := m.filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, []byte(content), 0600); err != nil {
+	if err := utils.WriteFileWithOwnership(tmpFile, []byte(content), 0600); err != nil {
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
 
@@ -208,10 +208,10 @@ func (m *AuthorizedKeysManager) createBackup() error {
 		}
 	}
 
-	// Create new backup
+	// Create new backup (with correct ownership)
 	timestamp := time.Now().Format("20060102-150405")
 	backupPath := fmt.Sprintf("%s.backup.%s", m.filePath, timestamp)
-	if err := os.WriteFile(backupPath, currentContent, 0600); err != nil {
+	if err := utils.WriteFileWithOwnership(backupPath, currentContent, 0600); err != nil {
 		return err
 	}
 
