@@ -27,6 +27,39 @@ var rootCmd = &cobra.Command{
 	Use:   "roamie",
 	Short: "Roamie Desktop - Device Authentication",
 	Long:  "CLI tool for managing Roamie Desktop device authentication and JWT tokens",
+	PersistentPreRun: func(cmd *cobra.Command, args []string) {
+		// Skip for commands that shouldn't show messages
+		skipCmds := []string{"version", "auto-upgrade", "help"}
+		for _, skip := range skipCmds {
+			if cmd.Name() == skip {
+				return
+			}
+		}
+
+		// Load config and show notifications
+		cfg, err := config.Load()
+		if err != nil || cfg == nil {
+			return
+		}
+
+		// Show first-run info about auto-upgrade (once)
+		if !cfg.InfoMessageShown && cfg.AutoUpgradeEnabled {
+			fmt.Println("ℹ️  Auto-upgrade is enabled. Disable with: roamie auto-upgrade off")
+			fmt.Println()
+			cfg.InfoMessageShown = true
+			cfg.Save()
+		}
+
+		// Show background update notification
+		if cfg.LastBackgroundUpdate != nil && !cfg.LastBackgroundUpdate.Shown {
+			fmt.Printf("✨ Roamie was updated to %s in the background!\n",
+				cfg.LastBackgroundUpdate.ToVersion)
+			fmt.Println("   Run 'roamie version' to see details.")
+			fmt.Println()
+			cfg.LastBackgroundUpdate.Shown = true
+			cfg.Save()
+		}
+	},
 }
 
 var authCmd = &cobra.Command{
@@ -201,8 +234,9 @@ Note: You must have registered the tunnel first with 'roamie tunnel register'.`,
 }
 
 var upgradeCmd = &cobra.Command{
-	Use:   "upgrade",
-	Short: "Upgrade roamie to the latest version",
+	Use:     "upgrade",
+	Aliases: []string{"update"},
+	Short:   "Upgrade roamie to the latest version",
 	Long: `Download and install the latest version of roamie from GitHub Releases.
 
 The upgrade process:
@@ -236,6 +270,38 @@ Example:
 var upgradeForce bool
 var upgradeNoRestart bool
 
+var doctorCmd = &cobra.Command{
+	Use:   "doctor",
+	Short: "Check system health and diagnose issues",
+	Long: `Check system health and diagnose common issues.
+
+Performs various checks to ensure Roamie is properly configured:
+  • Authentication status
+  • Server connectivity
+  • WireGuard installation
+  • Daemon status
+  • Auto-upgrade settings
+  • Available updates`,
+	Run: runDoctor,
+}
+
+var autoUpgradeCmd = &cobra.Command{
+	Use:   "auto-upgrade [on|off|status]",
+	Short: "Manage automatic background upgrades",
+	Long: `Manage automatic background upgrades.
+
+When enabled, the daemon will check for updates every 24 hours and
+automatically download and install new versions in the background.
+
+Examples:
+  roamie auto-upgrade         # Show current status
+  roamie auto-upgrade status  # Show current status
+  roamie auto-upgrade on      # Enable auto-upgrade
+  roamie auto-upgrade off     # Disable auto-upgrade`,
+	Args: cobra.MaximumNArgs(1),
+	Run:  runAutoUpgrade,
+}
+
 var vpnCmd = &cobra.Command{
 	Use:   "vpn",
 	Short: "VPN management commands",
@@ -268,7 +334,7 @@ func init() {
 	sshCmd.AddCommand(sshSyncCmd, sshStatusCmd, sshEnableCmd, sshDisableCmd, sshSetIntervalCmd)
 	tunnelCmd.AddCommand(tunnelStartCmd, tunnelStopCmd, tunnelStatusCmd, tunnelRegisterCmd, tunnelDisableCmd, tunnelEnableCmd)
 	vpnCmd.AddCommand(vpnInstallCmd, vpnStatusCmd)
-	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, vpnCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd)
+	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, vpnCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd, autoUpgradeCmd, doctorCmd)
 }
 
 func main() {
@@ -1171,5 +1237,209 @@ func runVPNStatus(cmd *cobra.Command, args []string) {
 		}
 	} else {
 		fmt.Println("\n(Run with sudo to see connection status)")
+	}
+}
+
+func runAutoUpgrade(cmd *cobra.Command, args []string) {
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("Error: Failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+
+	// If no config, create one with defaults
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+
+	// Default to status if no args
+	action := "status"
+	if len(args) > 0 {
+		action = args[0]
+	}
+
+	switch action {
+	case "status":
+		if cfg.AutoUpgradeEnabled {
+			fmt.Println("Auto-upgrade: enabled")
+			fmt.Println("\nThe daemon will check for updates every 24 hours")
+			fmt.Println("and install them automatically in the background.")
+		} else {
+			fmt.Println("Auto-upgrade: disabled")
+			fmt.Println("\nRun 'roamie auto-upgrade on' to enable automatic updates.")
+		}
+
+	case "on":
+		cfg.AutoUpgradeEnabled = true
+		if err := cfg.Save(); err != nil {
+			fmt.Printf("Error: Failed to save config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✓ Auto-upgrade enabled")
+		fmt.Println("\nThe daemon will check for updates every 24 hours.")
+		if isServiceRunning("roamie") {
+			fmt.Println("Daemon is running and will pick up changes automatically.")
+		} else {
+			fmt.Println("Note: Start the daemon with 'roamie setup-daemon' for background updates.")
+		}
+
+	case "off":
+		cfg.AutoUpgradeEnabled = false
+		cfg.InfoMessageShown = true // Mark as shown so we don't re-enable on next load
+		if err := cfg.Save(); err != nil {
+			fmt.Printf("Error: Failed to save config: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println("✓ Auto-upgrade disabled")
+		fmt.Println("\nYou can still update manually with 'roamie upgrade'.")
+
+	default:
+		fmt.Printf("Unknown action: %s\n", action)
+		fmt.Println("Usage: roamie auto-upgrade [on|off|status]")
+		os.Exit(1)
+	}
+}
+
+func runDoctor(cmd *cobra.Command, args []string) {
+	fmt.Println("Roamie Doctor")
+	fmt.Println("=============")
+	fmt.Println()
+
+	passed := 0
+	warnings := 0
+	errors := 0
+
+	// Check 1: Config loaded
+	fmt.Print("Authentication\n")
+	cfg, err := config.Load()
+	if err != nil {
+		fmt.Printf("  ✗ Config error: %v\n", err)
+		errors++
+	} else if cfg == nil {
+		fmt.Println("  ✗ Not logged in")
+		fmt.Println("    Run: roamie auth login")
+		errors++
+	} else {
+		fmt.Println("  ✓ Config loaded")
+		passed++
+
+		// Check JWT validity
+		if cfg.IsExpired() {
+			fmt.Println("  ✗ JWT expired")
+			fmt.Println("    Run: roamie auth refresh")
+			errors++
+		} else {
+			expiresIn := cfg.ExpiresIn()
+			if expiresIn < 24*time.Hour {
+				fmt.Printf("  ⚠️  JWT expires soon (%s)\n", expiresIn.Round(time.Hour))
+				fmt.Println("    Run: roamie auth refresh")
+				warnings++
+			} else {
+				fmt.Printf("  ✓ JWT valid (%s remaining)\n", expiresIn.Round(time.Hour))
+				passed++
+			}
+		}
+
+		// Check server reachability
+		client := api.NewClient(cfg.ServerURL)
+		if err := client.HealthCheck(); err != nil {
+			fmt.Printf("  ✗ Server unreachable: %v\n", err)
+			errors++
+		} else {
+			fmt.Printf("  ✓ Server reachable (%s)\n", cfg.ServerURL)
+			passed++
+		}
+	}
+	fmt.Println()
+
+	// Check 2: Network
+	fmt.Print("Network\n")
+
+	// WireGuard installed
+	if wireguard.CheckInstalled() {
+		fmt.Println("  ✓ WireGuard installed")
+		passed++
+	} else {
+		fmt.Println("  ⚠️  WireGuard not installed")
+		fmt.Println("    Run: roamie vpn install")
+		warnings++
+	}
+
+	// VPN status (if config exists)
+	if cfg != nil && cfg.VPNEnabled {
+		if cfg.VpnIP != "" {
+			fmt.Printf("  ✓ VPN configured (IP: %s)\n", cfg.VpnIP)
+			passed++
+		} else {
+			fmt.Println("  ⚠️  VPN enabled but not configured")
+			warnings++
+		}
+	} else if cfg != nil {
+		fmt.Println("  ⚠️  VPN disabled (SSH tunnel only)")
+		warnings++
+	}
+	fmt.Println()
+
+	// Check 3: Services
+	fmt.Print("Services\n")
+
+	// Daemon status
+	if isServiceRunning("roamie") {
+		fmt.Println("  ✓ Daemon running")
+		passed++
+	} else {
+		fmt.Println("  ⚠️  Daemon not running")
+		fmt.Println("    Run: roamie setup-daemon")
+		warnings++
+	}
+
+	// Tunnel status
+	if cfg != nil {
+		if cfg.TunnelEnabled && cfg.TunnelPort > 0 {
+			fmt.Printf("  ✓ Tunnel enabled (port %d)\n", cfg.TunnelPort)
+			passed++
+		} else if cfg.TunnelPort > 0 {
+			fmt.Printf("  ⚠️  Tunnel registered but disabled (port %d)\n", cfg.TunnelPort)
+			fmt.Println("    Run: roamie tunnel enable")
+			warnings++
+		} else {
+			fmt.Println("  ⚠️  Tunnel not registered")
+			fmt.Println("    Run: roamie tunnel register")
+			warnings++
+		}
+
+		// Auto-upgrade status
+		if cfg.AutoUpgradeEnabled {
+			fmt.Println("  ✓ Auto-upgrade enabled")
+			passed++
+		} else {
+			fmt.Println("  ⚠️  Auto-upgrade disabled")
+			fmt.Println("    Run: roamie auto-upgrade on")
+			warnings++
+		}
+	}
+	fmt.Println()
+
+	// Check 4: Updates
+	fmt.Print("Updates\n")
+	result, err := upgrade.CheckForUpdates()
+	if err != nil {
+		fmt.Printf("  ⚠️  Could not check for updates: %v\n", err)
+		warnings++
+	} else if result.UpdateAvailable {
+		fmt.Printf("  ⚠️  Update available: %s → %s\n", result.CurrentVersion, result.LatestVersion)
+		fmt.Println("    Run: roamie upgrade")
+		warnings++
+	} else {
+		fmt.Printf("  ✓ Up to date (%s)\n", result.CurrentVersion)
+		passed++
+	}
+	fmt.Println()
+
+	// Summary
+	fmt.Printf("Summary: %d passed, %d warnings, %d errors\n", passed, warnings, errors)
+
+	if errors > 0 {
+		os.Exit(1)
 	}
 }

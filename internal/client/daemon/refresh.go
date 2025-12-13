@@ -4,12 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"os/exec"
 	"time"
 
 	"github.com/kamikazebr/roamie-desktop/internal/client/api"
 	"github.com/kamikazebr/roamie-desktop/internal/client/config"
 	"github.com/kamikazebr/roamie-desktop/internal/client/ssh"
 	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
+	"github.com/kamikazebr/roamie-desktop/internal/client/upgrade"
+	"github.com/kamikazebr/roamie-desktop/pkg/version"
 )
 
 func Run(ctx context.Context) error {
@@ -40,6 +44,10 @@ func Run(ctx context.Context) error {
 	}
 	sshTicker := time.NewTicker(sshInterval)
 	defer sshTicker.Stop()
+
+	// Auto-upgrade ticker (check every 24 hours)
+	upgradeTicker := time.NewTicker(24 * time.Hour)
+	defer upgradeTicker.Stop()
 
 	// Tunnel state management
 	var tunnelClient *tunnel.Client
@@ -133,6 +141,19 @@ func Run(ctx context.Context) error {
 		case <-sshTicker.C:
 			if err := syncSSH(); err != nil {
 				log.Printf("SSH sync failed: %v", err)
+			}
+
+		case <-upgradeTicker.C:
+			// Reload config to get latest auto-upgrade setting
+			upgradeCfg, err := config.Load()
+			if err != nil {
+				log.Printf("Warning: failed to load config for upgrade check: %v", err)
+				continue
+			}
+			if upgradeCfg != nil && upgradeCfg.AutoUpgradeEnabled {
+				if err := checkAndAutoUpgrade(upgradeCfg); err != nil {
+					log.Printf("Auto-upgrade check failed: %v", err)
+				}
 			}
 		}
 	}
@@ -303,4 +324,90 @@ func startTunnel(ctx context.Context, cfg *config.Config) (*tunnel.Client, conte
 
 	log.Printf("✓ Tunnel started (port %d)", cfg.TunnelPort)
 	return client, cancel
+}
+
+// checkAndAutoUpgrade checks for updates and performs automatic upgrade if available
+func checkAndAutoUpgrade(cfg *config.Config) error {
+	currentVersion := version.Version
+
+	// Skip if running dev version
+	if currentVersion == "dev" {
+		log.Println("Auto-upgrade: skipping dev version")
+		return nil
+	}
+
+	log.Println("Auto-upgrade: checking for updates...")
+
+	// Check for updates
+	result, err := upgrade.CheckForUpdates()
+	if err != nil {
+		return fmt.Errorf("failed to check for updates: %w", err)
+	}
+
+	// Update last check time
+	cfg.LastUpgradeCheck = time.Now()
+	cfg.Save()
+
+	if !result.UpdateAvailable {
+		log.Printf("Auto-upgrade: already on latest version (%s)", currentVersion)
+		return nil
+	}
+
+	if result.DownloadURL == "" {
+		log.Printf("Auto-upgrade: update available (%s) but no compatible binary found", result.LatestVersion)
+		return nil
+	}
+
+	log.Printf("Auto-upgrade: updating from %s to %s...", currentVersion, result.LatestVersion)
+
+	// Save info for notification after restart
+	cfg.LastBackgroundUpdate = &config.BackgroundUpdateInfo{
+		FromVersion: currentVersion,
+		ToVersion:   result.LatestVersion,
+		UpdatedAt:   time.Now(),
+		Shown:       false,
+	}
+	if err := cfg.Save(); err != nil {
+		log.Printf("Warning: failed to save update info: %v", err)
+	}
+
+	// Perform the upgrade
+	if err := upgrade.Upgrade(result); err != nil {
+		// Clear the update info on failure
+		cfg.LastBackgroundUpdate = nil
+		cfg.Save()
+		return fmt.Errorf("upgrade failed: %w", err)
+	}
+
+	log.Printf("Auto-upgrade: successfully upgraded to %s", result.LatestVersion)
+
+	// Restart the daemon service
+	log.Println("Auto-upgrade: restarting daemon...")
+	restartDaemon()
+
+	return nil
+}
+
+// restartDaemon restarts the daemon service
+func restartDaemon() {
+	// Try systemctl restart first (Linux)
+	cmd := exec.Command("systemctl", "--user", "restart", "roamie")
+	if err := cmd.Run(); err != nil {
+		// If systemctl fails, try to exec ourselves
+		log.Printf("systemctl restart failed, attempting self-restart: %v", err)
+
+		// Get current executable path
+		execPath, err := os.Executable()
+		if err != nil {
+			log.Printf("Failed to get executable path: %v", err)
+			return
+		}
+
+		// Replace current process with new binary
+		log.Println("Restarting daemon process...")
+		if err := exec.Command(execPath, "daemon").Start(); err != nil {
+			log.Printf("Failed to restart daemon: %v", err)
+		}
+		os.Exit(0)
+	}
 }

@@ -52,13 +52,30 @@ type Config struct {
 
 	// VPN Configuration (optional, user can opt-in)
 	VPNEnabled bool `json:"vpn_enabled"`
+
+	// Auto-upgrade settings
+	AutoUpgradeEnabled bool      `json:"auto_upgrade_enabled"`
+	LastUpgradeCheck   time.Time `json:"last_upgrade_check,omitempty"`
+
+	// For notification after background update
+	LastBackgroundUpdate *BackgroundUpdateInfo `json:"last_background_update,omitempty"`
+	InfoMessageShown     bool                  `json:"info_message_shown"`
+}
+
+// BackgroundUpdateInfo stores info about a background update for notification
+type BackgroundUpdateInfo struct {
+	FromVersion string    `json:"from_version"`
+	ToVersion   string    `json:"to_version"`
+	UpdatedAt   time.Time `json:"updated_at"`
+	Shown       bool      `json:"shown"`
 }
 
 // DefaultConfig returns a config with default values
 func DefaultConfig() *Config {
 	return &Config{
-		SSHSyncEnabled:  true,          // Enable SSH sync by default
-		SSHSyncInterval: 1 * time.Hour, // Default 1 hour
+		SSHSyncEnabled:     true,          // Enable SSH sync by default
+		SSHSyncInterval:    1 * time.Hour, // Default 1 hour
+		AutoUpgradeEnabled: true,          // Enable auto-upgrade by default
 	}
 }
 
@@ -90,6 +107,13 @@ func Load() (*Config, error) {
 	}
 	// SSHSyncEnabled defaults to false if not set (zero value for bool)
 	// User must explicitly enable it
+
+	// Apply auto-upgrade default: if user hasn't been notified yet and
+	// auto-upgrade is not enabled, enable it (this covers upgrades from
+	// older versions that didn't have this field)
+	if !config.InfoMessageShown && !config.AutoUpgradeEnabled {
+		config.AutoUpgradeEnabled = true
+	}
 
 	return &config, nil
 }

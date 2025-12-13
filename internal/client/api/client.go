@@ -23,6 +23,21 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// HealthCheck checks if the server is reachable
+func (c *Client) HealthCheck() error {
+	resp, err := c.httpClient.Get(c.baseURL + "/health")
+	if err != nil {
+		return fmt.Errorf("failed to reach server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
 // CreateDeviceRequest creates a new device authorization challenge
 func (c *Client) CreateDeviceRequest(deviceID, hostname, username, publicKey, osType, hardwareID string) (*DeviceRequestResponse, error) {
 	reqBody := map[string]interface{}{
