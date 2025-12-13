@@ -386,8 +386,8 @@ func runLogout(cmd *cobra.Command, args []string) {
 
 	// Step 2: Stop daemon if running
 	fmt.Println("→ Stopping daemon...")
-	exec.Command("systemctl", "stop", "roamie").Run()
-	exec.Command("systemctl", "disable", "roamie").Run()
+	runSystemctlUser("stop", "roamie")
+	runSystemctlUser("disable", "roamie")
 	fmt.Println("✓ Daemon stopped")
 
 	// Step 3: Disconnect VPN if connected
@@ -584,7 +584,7 @@ func runSSHEnable(cmd *cobra.Command, args []string) {
 
 	fmt.Println("✓ SSH sync enabled")
 	fmt.Println("\nNote: Restart the daemon for changes to take effect:")
-	fmt.Println("  sudo systemctl restart roamie-client")
+	fmt.Println("  systemctl --user restart roamie")
 }
 
 func runSSHDisable(cmd *cobra.Command, args []string) {
@@ -635,7 +635,7 @@ func runSSHSetInterval(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("✓ SSH sync interval set to %v\n", duration)
 	fmt.Println("\nNote: Restart the daemon for changes to take effect:")
-	fmt.Println("  sudo systemctl restart roamie-client")
+	fmt.Println("  systemctl --user restart roamie")
 }
 
 func runConnect(cmd *cobra.Command, args []string) {
@@ -1020,12 +1020,12 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	if isServiceRunning("roamie") {
 		if upgradeNoRestart {
 			fmt.Println("\nDaemon is running. Skipping restart (--no-restart flag set).")
-			fmt.Println("Restart manually: sudo systemctl restart roamie")
+			fmt.Println("Restart manually: systemctl --user restart roamie")
 		} else {
 			fmt.Println("\nRestarting daemon...")
-			if err := exec.Command("systemctl", "restart", "roamie").Run(); err != nil {
+			if err := runSystemctlUser("restart", "roamie"); err != nil {
 				fmt.Printf("Warning: Failed to restart daemon: %v\n", err)
-				fmt.Println("Please restart manually: sudo systemctl restart roamie")
+				fmt.Println("Please restart manually: systemctl --user restart roamie")
 			} else {
 				fmt.Println("✓ Daemon restarted")
 			}
@@ -1033,9 +1033,38 @@ func runUpgrade(cmd *cobra.Command, args []string) {
 	}
 }
 
+// runSystemctlUser runs a systemctl --user command, handling sudo correctly
+func runSystemctlUser(action, service string) error {
+	sudoUser := os.Getenv("SUDO_USER")
+	uid := os.Getenv("SUDO_UID")
+
+	var cmd *exec.Cmd
+	if sudoUser != "" && uid != "" {
+		// Running as root via sudo, need to run systemctl as the actual user
+		cmd = exec.Command("sudo", "-u", sudoUser,
+			"XDG_RUNTIME_DIR=/run/user/"+uid,
+			"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+uid+"/bus",
+			"systemctl", "--user", action, service)
+	} else {
+		cmd = exec.Command("systemctl", "--user", action, service)
+	}
+	return cmd.Run()
+}
+
 func isServiceRunning(name string) bool {
-	err := exec.Command("systemctl", "is-active", "--quiet", name).Run()
-	return err == nil
+	sudoUser := os.Getenv("SUDO_USER")
+	uid := os.Getenv("SUDO_UID")
+
+	var cmd *exec.Cmd
+	if sudoUser != "" && uid != "" {
+		cmd = exec.Command("sudo", "-u", sudoUser,
+			"XDG_RUNTIME_DIR=/run/user/"+uid,
+			"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+uid+"/bus",
+			"systemctl", "--user", "is-active", "--quiet", name)
+	} else {
+		cmd = exec.Command("systemctl", "--user", "is-active", "--quiet", name)
+	}
+	return cmd.Run() == nil
 }
 
 func runVPNInstall(cmd *cobra.Command, args []string) {

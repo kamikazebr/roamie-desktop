@@ -23,10 +23,6 @@ func getUserServicePath(homeDir string) string {
 	return filepath.Join(homeDir, ".config", "systemd", "user", "roamie.service")
 }
 
-// getSystemServicePath returns the path for system-wide systemd service
-func getSystemServicePath() string {
-	return "/etc/systemd/system/roamie.service"
-}
 
 func setupServicePlatform(cfg ServiceConfig, autoYes bool) error {
 	// Use user systemd service (starts after login)
