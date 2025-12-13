@@ -75,20 +75,19 @@ jobs:
           echo "=== Testing WireGuard auto-install ==="
 
           # This test will call PromptInstall() which runs 'brew install wireguard-tools'
-          go test -v -run TestAutoInstallFlow ./internal/client/wireguard/
-
-          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
-          eval "$(/opt/homebrew/bin/brew shellenv)"
-
-          echo "Verifying installation..."
-          which wg && echo "✓ wg installed" || echo "✗ wg not found"
-          which wg-quick && echo "✓ wg-quick installed" || echo "✗ wg-quick not found"
-          wg --version || true
+          # Use -count=1 to disable test caching (we need actual execution)
+          go test -v -count=1 -run TestAutoInstallFlow ./internal/client/wireguard/
 
       - name: Verify WireGuard installation
         run: |
-          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
-          eval "$(/opt/homebrew/bin/brew shellenv)"
+          # Add Homebrew paths (ARM: /opt/homebrew, Intel: /usr/local)
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
+          echo "PATH=$PATH"
+          echo "Checking wg locations..."
+          ls -la /opt/homebrew/bin/wg 2>/dev/null || echo "/opt/homebrew/bin/wg not found"
+          ls -la /usr/local/bin/wg 2>/dev/null || echo "/usr/local/bin/wg not found"
+
           which wg && which wg-quick && which wireguard-go
           wg --version
 
@@ -97,8 +96,8 @@ jobs:
       # ============================================
       - name: Test WireGuard interface creation
         run: |
-          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
-          eval "$(/opt/homebrew/bin/brew shellenv)"
+          # Add Homebrew paths (ARM: /opt/homebrew, Intel: /usr/local)
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
           mkdir -p /tmp/wg-test
           chmod 700 /tmp/wg-test
@@ -215,8 +214,8 @@ jobs:
         if: always()
         timeout-minutes: 1
         run: |
-          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
-          eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
+          # Add Homebrew paths (ARM: /opt/homebrew, Intel: /usr/local)
+          export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
           sudo wg-quick down /tmp/wg-test/wg0.conf 2>/dev/null || true
           rm -rf /tmp/wg-test
           # Use launchctl instead of systemsetup (doesn't hang)
