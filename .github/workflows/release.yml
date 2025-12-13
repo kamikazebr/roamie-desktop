@@ -22,6 +22,18 @@ jobs:
         id: version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
+      - name: Extract changelog for version
+        id: changelog
+        run: |
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          # Extract section between this version and the next version header
+          NOTES=$(awk "/^## \[${VERSION}\]/{flag=1; next} /^## \[v/{if(flag) exit} flag" CHANGELOG.md)
+          if [ -z "$NOTES" ]; then
+            NOTES="Release ${VERSION}"
+          fi
+          # Write to file for multiline support
+          echo "$NOTES" > release-notes.md
+
       - name: Build all platforms
         run: ./scripts/release.sh ${{ steps.version.outputs.VERSION }}
 
@@ -31,5 +43,5 @@ jobs:
           files: |
             dist/roamie-*
             dist/checksums.txt
-          generate_release_notes: true
+          body_path: release-notes.md
           token: ${{ secrets.RELEASE_TOKEN }}
