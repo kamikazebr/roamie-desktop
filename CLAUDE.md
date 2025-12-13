@@ -314,6 +314,11 @@ This ensures each email account gets a unique subnet, even when using the same p
 - `roamie daemon stop` - Stop daemon
 - `roamie daemon status` - Check daemon status
 
+### Maintenance
+- `roamie upgrade` (or `roamie update`) - Upgrade to latest version
+- `roamie auto-upgrade [on|off|status]` - Control automatic background upgrades (enabled by default)
+- `roamie doctor` - Run system health diagnostics (auth, server, WireGuard, daemon status)
+
 ### macOS Client Installation
 
 When running `sudo roamie auth login` on macOS:
@@ -429,6 +434,7 @@ Workflow: `.github/workflows/macos-client.yml`
 ## Documentation
 
 ### Additional Documentation Files
+- **CHANGELOG.md** - Release history following Keep a Changelog format
 - **FLUTTER_INTEGRATION.md** - Complete Flutter/mobile app integration guide with API endpoints and Dart examples
 - **FLUTTER_MIGRATION_GUIDE.md** - Migration guide from email auth to QR code device authorization
 - **QUICKSTART.md** - Fast setup guide for new developers
@@ -488,7 +494,21 @@ Client and server have **separate versioning** with different git tags:
 | **Client** | `v*` (e.g., `v0.0.1`, `v1.0.0`) | `release.yml` | Multi-platform binaries on GitHub Releases |
 | **Server** | `server-v*` (e.g., `server-v0.0.1`) | `docker.yml` | Docker image on `ghcr.io/kamikazebr/roamie-desktop/roamie-server` |
 
-**Creating a release:**
+**Creating a release (recommended - using /changelog):**
+```bash
+# In Claude Code, run:
+/changelog
+```
+
+The `/changelog` command will:
+1. Fetch commits since last tag
+2. Generate detailed, user-friendly release notes
+3. Ask to add to `CHANGELOG.md`
+4. Ask to create tag and push (triggers GitHub Action)
+
+The release workflow (`.github/workflows/release.yml`) automatically extracts notes from `CHANGELOG.md` for the GitHub release.
+
+**Creating a release (manual):**
 ```bash
 # Client release (triggers multi-platform build)
 git tag v0.0.3 && git push origin v0.0.3
