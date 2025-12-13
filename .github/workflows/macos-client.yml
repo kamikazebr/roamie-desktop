@@ -77,6 +77,9 @@ jobs:
           # This test will call PromptInstall() which runs 'brew install wireguard-tools'
           go test -v -run TestAutoInstallFlow ./internal/client/wireguard/
 
+          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+
           echo "Verifying installation..."
           which wg && echo "✓ wg installed" || echo "✗ wg not found"
           which wg-quick && echo "✓ wg-quick installed" || echo "✗ wg-quick not found"
@@ -84,6 +87,8 @@ jobs:
 
       - name: Verify WireGuard installation
         run: |
+          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
+          eval "$(/opt/homebrew/bin/brew shellenv)"
           which wg && which wg-quick && which wireguard-go
           wg --version
 
@@ -92,6 +97,9 @@ jobs:
       # ============================================
       - name: Test WireGuard interface creation
         run: |
+          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
+          eval "$(/opt/homebrew/bin/brew shellenv)"
+
           mkdir -p /tmp/wg-test
           chmod 700 /tmp/wg-test
 
@@ -207,6 +215,8 @@ jobs:
         if: always()
         timeout-minutes: 1
         run: |
+          # Add Homebrew to PATH (macOS ARM installs to /opt/homebrew)
+          eval "$(/opt/homebrew/bin/brew shellenv)" 2>/dev/null || true
           sudo wg-quick down /tmp/wg-test/wg0.conf 2>/dev/null || true
           rm -rf /tmp/wg-test
           # Use launchctl instead of systemsetup (doesn't hang)
