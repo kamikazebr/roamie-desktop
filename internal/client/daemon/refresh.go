@@ -31,6 +31,10 @@ func Run(ctx context.Context) error {
 	configTicker := time.NewTicker(10 * time.Second)
 	defer configTicker.Stop()
 
+	// Tunnel health check ticker (every 30 seconds to detect broken connections)
+	tunnelHealthTicker := time.NewTicker(30 * time.Second)
+	defer tunnelHealthTicker.Stop()
+
 	// Load config to get SSH sync interval
 	cfg, err := config.Load()
 	if err != nil {
@@ -141,6 +145,33 @@ func Run(ctx context.Context) error {
 		case <-sshTicker.C:
 			if err := syncSSH(); err != nil {
 				log.Printf("SSH sync failed: %v", err)
+			}
+
+		case <-tunnelHealthTicker.C:
+			// Check if tunnel should be running but isn't connected
+			if tunnelEnabled && tunnelClient != nil {
+				if !tunnelClient.IsConnected() {
+					log.Println("Tunnel health check: connection lost, restarting...")
+					// Stop the old tunnel
+					if tunnelCancel != nil {
+						tunnelCancel()
+					}
+					tunnelClient.Disconnect()
+
+					// Reload config and restart tunnel
+					newCfg, err := config.Load()
+					if err != nil {
+						log.Printf("Failed to reload config for tunnel restart: %v", err)
+					} else if newCfg != nil && newCfg.TunnelEnabled {
+						tunnelClient, tunnelCancel = startTunnel(ctx, newCfg)
+						if tunnelClient == nil {
+							tunnelEnabled = false
+							log.Println("Tunnel restart failed")
+						} else {
+							log.Println("✓ Tunnel restarted successfully")
+						}
+					}
+				}
 			}
 
 		case <-upgradeTicker.C:

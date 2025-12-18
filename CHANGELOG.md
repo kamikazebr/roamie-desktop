@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.0.9] - 2025-12-18
+
+### Bug Fixes
+
+- **SSH tunnel auto-reconnect**: Fixed daemon not detecting broken SSH tunnel connections
+  - Added health check every 30 seconds to monitor tunnel connection state
+  - Automatically restarts tunnel when connection is lost (e.g., after network outage or PC restart)
+  - Previously, tunnel would break silently and require manual daemon restart
+
 ## [v0.0.8] - 2025-12-13
 
 ### Features
