@@ -3,7 +3,7 @@
 ## ⚡ Setup Instantâneo
 
 ```bash
-cd /home/felipenovaesrocha/Projects/roamie-vpn
+cd /home/felipenovaesrocha/Projects/roamie-desktop
 
 # 1. Setup completo (PostgreSQL + Migrations)
 ./scripts/docker-dev.sh setup
@@ -49,7 +49,7 @@ nano .env
 ### 1. Health Check
 ```bash
 curl http://localhost:8080/health
-# Deve retornar: {"status":"healthy","service":"roamie-vpn"}
+# Deve retornar: {"status":"healthy","service":"roamie-desktop"}
 ```
 
 ### 2. Solicitar código de autenticação

@@ -170,7 +170,7 @@ func (c *Config) ExpiresIn() time.Duration {
 	return time.Until(c.ExpiresAt)
 }
 
-// MigrateFromLegacyStorage migrates device info from ~/.roamie-vpn/devices/ to ~/.roamie/config.json
+// MigrateFromLegacyStorage migrates device info from ~/.roamie-desktop/devices/ to ~/.roamie/config.json
 // This is called automatically when loading config
 func MigrateFromLegacyStorage() error {
 	_, home, err := utils.GetActualUser()
@@ -178,7 +178,7 @@ func MigrateFromLegacyStorage() error {
 		return nil // Skip migration if can't get home
 	}
 
-	legacyDir := filepath.Join(home, ".roamie-vpn")
+	legacyDir := filepath.Join(home, ".roamie-desktop")
 	devicesDir := filepath.Join(legacyDir, "devices")
 
 	// Check if legacy storage exists

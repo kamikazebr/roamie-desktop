@@ -54,7 +54,7 @@ func getConfigDir() (string, error) {
 		}
 	}
 
-	configDir := filepath.Join(home, ".roamie-vpn")
+	configDir := filepath.Join(home, ".roamie-desktop")
 	if err := utils.MkdirAllWithOwnership(configDir, 0700); err != nil {
 		return "", err
 	}

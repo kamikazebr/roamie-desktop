@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:15-alpine
-    container_name: roamie-vpn-postgres
+    container_name: roamie-desktop-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: wireguard
@@ -20,13 +20,13 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - roamie-vpn-network
+      - roamie-desktop-network
 
   # Opcional: pgAdmin para visualizar o banco
   # Descomente se quiser interface gráfica
   # pgadmin:
   #   image: dpage/pgadmin4:latest
-  #   container_name: roamie-vpn-pgadmin
+  #   container_name: roamie-desktop-pgadmin
   #   restart: unless-stopped
   #   environment:
   #     PGADMIN_DEFAULT_EMAIL: admin@roamie.com
@@ -35,7 +35,7 @@ services:
   #   ports:
   #     - "5050:80"
   #   networks:
-  #     - roamie-vpn-network
+  #     - roamie-desktop-network
   #   depends_on:
   #     - postgres
 
@@ -44,5 +44,5 @@ volumes:
     driver: local
 
 networks:
-  roamie-vpn-network:
+  roamie-desktop-network:
     driver: bridge

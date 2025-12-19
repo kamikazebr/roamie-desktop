@@ -24,7 +24,7 @@ import (
 const (
 	TunnelPort       = 2222
 	ServerConfigPath = "/etc/roamie-server"
-	LegacyConfigPath = "/etc/roamie-vpn"
+	LegacyConfigPath = "/etc/roamie-desktop"
 	HostKeyFile      = "ssh_host_key"
 	BackupDirName    = "backups"
 )
@@ -79,7 +79,7 @@ func NewServer(deviceRepo *storage.DeviceRepository) (*Server, error) {
 	return s, nil
 }
 
-// migrateConfigPath migrates from /etc/roamie-vpn to /etc/roamie-server
+// migrateConfigPath migrates from /etc/roamie-desktop to /etc/roamie-server
 func (s *Server) migrateConfigPath() error {
 	// Check if old path exists and new path doesn't
 	if _, err := os.Stat(LegacyConfigPath); os.IsNotExist(err) {

@@ -1,18 +1,18 @@
 ## Traefik Dynamic Configuration for Roamie VPN
-## Deploy this to: /var/lib/coolify/traefik/dynamic/roamie-vpn.yml on the server
+## Deploy this to: /var/lib/coolify/traefik/dynamic/roamie-desktop.yml on the server
 
 http:
   routers:
-    roamie-vpn:
+    roamie-desktop:
       rule: "Host(`felipenovaesrocha.xyz`) && (PathPrefix(`/api/`) || Path(`/health`))"
-      service: roamie-vpn-service
+      service: roamie-desktop-service
       entryPoints:
         - https
       tls:
         certResolver: letsencrypt
 
   services:
-    roamie-vpn-service:
+    roamie-desktop-service:
       loadBalancer:
         servers:
           - url: "http://localhost:8081"

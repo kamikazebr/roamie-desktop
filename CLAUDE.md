@@ -268,10 +268,10 @@ Devices are identified by format: `os-username-hardwareid` (e.g., `android-john-
   4. Returns WireGuard config file to client
 
 ### Client Storage
-- Credentials stored in `~/.config/roamie-vpn/credentials.json`
+- Credentials stored in `~/.config/roamie-desktop/credentials.json`
 - Contains JWT token for API authentication
-- Private keys stored in `~/.config/roamie-vpn/keys/`
-- WireGuard config written to `~/.config/roamie-vpn/wg0.conf`
+- Private keys stored in `~/.config/roamie-desktop/keys/`
+- WireGuard config written to `~/.config/roamie-desktop/wg0.conf`
 
 ### Multi-Account Isolation Bug Fix (Critical)
 **Problem**: When users switched accounts on the same device, both accounts shared the same subnet because the server used Firebase UID (device-based) for user lookup.

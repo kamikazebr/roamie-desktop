@@ -220,7 +220,7 @@ func runServe(cmd *cobra.Command, args []string) {
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"healthy","service":"roamie-vpn"}`))
+		w.Write([]byte(`{"status":"healthy","service":"roamie-desktop"}`))
 	})
 
 	// Public routes

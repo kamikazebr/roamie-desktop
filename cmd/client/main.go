@@ -478,7 +478,7 @@ func runLogout(cmd *cobra.Command, args []string) {
 
 	// Remove device info directory
 	configDir, _ := config.GetConfigDir()
-	devicesDir := filepath.Join(strings.Replace(configDir, ".roamie", ".roamie-vpn", 1), "devices")
+	devicesDir := filepath.Join(strings.Replace(configDir, ".roamie", ".roamie-desktop", 1), "devices")
 	os.RemoveAll(devicesDir)
 
 	// Remove WireGuard config

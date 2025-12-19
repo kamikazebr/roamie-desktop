@@ -4,7 +4,7 @@
 
 Data de conclusão: 20 de Outubro de 2025
 Versão: MVP (Fase 1)
-Localização: `/home/felipenovaesrocha/Projects/roamie-vpn`
+Localização: `/home/felipenovaesrocha/Projects/roamie-desktop`
 
 ---
 
@@ -53,7 +53,7 @@ Localização: `/home/felipenovaesrocha/Projects/roamie-vpn`
 ## 📁 Estrutura do Projeto (42 arquivos)
 
 ```
-roamie-vpn/
+roamie-desktop/
 ├── cmd/
 │   ├── server/main.go          # Servidor HTTP + WireGuard
 │   └── client/main.go          # CLI cliente
@@ -199,7 +199,7 @@ Nenhum erro de compilação encontrado.
 
 ### Setup Inicial
 ```bash
-cd /home/felipenovaesrocha/Projects/roamie-vpn
+cd /home/felipenovaesrocha/Projects/roamie-desktop
 cp .env.example .env
 nano .env  # Configure DATABASE_URL, RESEND_API_KEY, etc
 ./scripts/migrate.sh

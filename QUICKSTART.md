@@ -5,7 +5,7 @@
 **Forma mais rápida de começar!** Não precisa instalar PostgreSQL.
 
 ```bash
-cd /home/felipenovaesrocha/Projects/roamie-vpn
+cd /home/felipenovaesrocha/Projects/roamie-desktop
 
 # Setup completo em 1 comando
 ./scripts/docker-dev.sh setup
@@ -43,7 +43,7 @@ GRANT ALL PRIVILEGES ON DATABASE wireguard_vpn TO wireguard;
 ### 2. Configurar Ambiente
 
 ```bash
-cd /home/felipenovaesrocha/Projects/roamie-vpn
+cd /home/felipenovaesrocha/Projects/roamie-desktop
 
 # Configurar variáveis de ambiente
 cp .env.example .env
@@ -109,8 +109,8 @@ apt-get update
 apt-get install -y postgresql wireguard git golang-go
 
 # Clone o projeto
-git clone https://github.com/felipenovaesrocha/roamie-vpn
-cd roamie-vpn
+git clone https://github.com/felipenovaesrocha/roamie-desktop
+cd roamie-desktop
 
 # Configure .env
 cp .env.example .env
@@ -170,7 +170,7 @@ curl http://localhost:8080/api/admin/network/scan
 ## Estrutura de Arquivos Importantes
 
 ```
-roamie-vpn/
+roamie-desktop/
 ├── .env                    # Configurações (criar a partir de .env.example)
 ├── roamie-server              # Binário do servidor (após build)
 ├── roamie              # Binário do cliente (após build)
@@ -242,7 +242,7 @@ ping 10.100.0.1
 ## Obtendo Ajuda
 
 - **README**: Documentação completa
-- **GitHub Issues**: https://github.com/felipenovaesrocha/roamie-vpn/issues
+- **GitHub Issues**: https://github.com/felipenovaesrocha/roamie-desktop/issues
 - **Logs do servidor**: Verifique output do `./roamie-server`
 
 ## Exemplo de Fluxo Completo

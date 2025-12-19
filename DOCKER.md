@@ -23,7 +23,7 @@ docker compose version
 
 ### Passo 1: Setup automático
 ```bash
-cd /home/felipenovaesrocha/Projects/roamie-vpn
+cd /home/felipenovaesrocha/Projects/roamie-desktop
 
 # Setup completo: sobe PostgreSQL + executa migrations
 ./scripts/docker-dev.sh setup
@@ -266,7 +266,7 @@ POSTGRES_SHARED_BUFFERS: 256MB
 Útil se você tem outros serviços Docker:
 ```yaml
 networks:
-  roamie-vpn-network:
+  roamie-desktop-network:
     external: true
 ```
 
