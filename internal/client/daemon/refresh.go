@@ -200,17 +200,26 @@ func checkAndRefresh() error {
 		return fmt.Errorf("no configuration found, please run 'roamie auth login'")
 	}
 
-	// Validate device still exists on server
-	if err := validateDeviceExists(cfg); err != nil {
-		if err.Error() == "device_deleted" {
-			log.Println("Device was deleted remotely. Cleaning up local configuration...")
-			if err := performLocalCleanup(cfg); err != nil {
-				log.Printf("Warning: cleanup failed: %v", err)
+	// Grace period: Skip device validation if config was created recently (within 2 minutes)
+	// This prevents race conditions where the daemon starts before the login flow completes
+	gracePeriod := 2 * time.Minute
+	configAge := time.Since(cfg.CreatedAt)
+	if configAge < gracePeriod {
+		log.Printf("Config created %s ago (grace period: %s), skipping device validation",
+			configAge.Round(time.Second), gracePeriod)
+	} else {
+		// Validate device still exists on server (with retry for transient failures)
+		if err := validateDeviceExistsWithRetry(cfg, 3); err != nil {
+			if err.Error() == "device_deleted" {
+				log.Println("Device was deleted remotely. Cleaning up local configuration...")
+				if err := performLocalCleanup(cfg); err != nil {
+					log.Printf("Warning: cleanup failed: %v", err)
+				}
+				return fmt.Errorf("device was deleted remotely")
 			}
-			return fmt.Errorf("device was deleted remotely")
+			log.Printf("Warning: device validation check failed: %v", err)
+			// Don't return error - allow refresh to continue even if validation fails
 		}
-		log.Printf("Warning: device validation check failed: %v", err)
-		// Don't return error - allow refresh to continue even if validation fails
 	}
 
 	// Check if JWT expires in < 24 hours
@@ -252,6 +261,48 @@ func validateDeviceExists(cfg *config.Config) error {
 	client := api.NewClient(cfg.ServerURL)
 	_, err := client.ValidateDevice(cfg.DeviceID, cfg.JWT)
 	return err
+}
+
+// validateDeviceExistsWithRetry validates device with retries for transient failures
+// This helps avoid false "device deleted" errors due to network issues or server restarts
+func validateDeviceExistsWithRetry(cfg *config.Config, maxRetries int) error {
+	if cfg.DeviceID == "" {
+		return nil // Skip validation if device ID not set
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		client := api.NewClient(cfg.ServerURL)
+		_, err := client.ValidateDevice(cfg.DeviceID, cfg.JWT)
+
+		if err == nil {
+			return nil // Success
+		}
+
+		lastErr = err
+
+		// If it's a definitive "device_deleted" error, don't retry
+		// Only retry on network/transient errors
+		if err.Error() == "device_deleted" {
+			// For device_deleted, wait and retry once more to be sure
+			// (server might be restarting or there's a race condition)
+			if attempt < maxRetries {
+				log.Printf("Device validation returned 404, retrying in 5s (attempt %d/%d)...", attempt, maxRetries)
+				time.Sleep(5 * time.Second)
+				continue
+			}
+		} else {
+			// For other errors (network, timeout), retry with backoff
+			if attempt < maxRetries {
+				backoff := time.Duration(attempt*2) * time.Second
+				log.Printf("Device validation failed: %v, retrying in %s (attempt %d/%d)...", err, backoff, attempt, maxRetries)
+				time.Sleep(backoff)
+				continue
+			}
+		}
+	}
+
+	return lastErr
 }
 
 func performLocalCleanup(cfg *config.Config) error {
