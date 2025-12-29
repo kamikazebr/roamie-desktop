@@ -270,9 +270,10 @@ func validateDeviceExistsWithRetry(cfg *config.Config, maxRetries int) error {
 		return nil // Skip validation if device ID not set
 	}
 
+	client := api.NewClient(cfg.ServerURL)
 	var lastErr error
+
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		client := api.NewClient(cfg.ServerURL)
 		_, err := client.ValidateDevice(cfg.DeviceID, cfg.JWT)
 
 		if err == nil {
