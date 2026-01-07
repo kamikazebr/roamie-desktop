@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -210,7 +211,7 @@ func checkAndRefresh() error {
 	} else {
 		// Validate device still exists on server (with retry for transient failures)
 		if err := validateDeviceExistsWithRetry(cfg, 3); err != nil {
-			if err.Error() == "device_deleted" {
+			if errors.Is(err, api.ErrDeviceDeleted) {
 				log.Println("Device was deleted remotely. Cleaning up local configuration...")
 				if err := performLocalCleanup(cfg); err != nil {
 					log.Printf("Warning: cleanup failed: %v", err)
@@ -282,11 +283,9 @@ func validateDeviceExistsWithRetry(cfg *config.Config, maxRetries int) error {
 
 		lastErr = err
 
-		// If it's a definitive "device_deleted" error, don't retry
-		// Only retry on network/transient errors
-		if err.Error() == "device_deleted" {
-			// For device_deleted, wait and retry once more to be sure
-			// (server might be restarting or there's a race condition)
+		// For device_deleted, still retry to handle potential race conditions
+		// or server restarts, but with a fixed 5s delay
+		if errors.Is(err, api.ErrDeviceDeleted) {
 			if attempt < maxRetries {
 				log.Printf("Device validation returned 404, retrying in 5s (attempt %d/%d)...", attempt, maxRetries)
 				time.Sleep(5 * time.Second)
