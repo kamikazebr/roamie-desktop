@@ -3,11 +3,15 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 )
+
+// ErrDeviceDeleted is returned when the device has been deleted from the server
+var ErrDeviceDeleted = errors.New("device_deleted")
 
 type Client struct {
 	baseURL    string
@@ -243,7 +247,7 @@ func (c *Client) ValidateDevice(deviceID, jwt string) (*ValidateDeviceResponse, 
 
 	// Handle 404 - device was deleted
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("device_deleted")
+		return nil, ErrDeviceDeleted
 	}
 
 	if resp.StatusCode != http.StatusOK {
