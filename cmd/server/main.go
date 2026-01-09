@@ -191,9 +191,23 @@ func runServe(cmd *cobra.Command, args []string) {
 	}
 	log.Println("Tunnel port pool initialized")
 
+	// Initialize DiagnosticsService (optional - only if Firebase is configured)
+	var diagnosticsService *services.DiagnosticsService
+	if os.Getenv("FIREBASE_CREDENTIALS_PATH") != "" {
+		diagnosticsService, err = services.NewDiagnosticsService(ctx)
+		if err != nil {
+			log.Printf("Warning: Failed to initialize DiagnosticsService: %v", err)
+			log.Println("Remote diagnostics will not be available")
+		} else {
+			log.Println("DiagnosticsService initialized successfully")
+		}
+	} else {
+		log.Println("Firebase not configured - remote diagnostics will not be available")
+	}
+
 	// Initialize handlers
 	authHandler := api.NewAuthHandler(authService)
-	deviceHandler := api.NewDeviceHandler(deviceService, userRepo, deviceRepo, wgManager, deviceCache)
+	deviceHandler := api.NewDeviceHandler(deviceService, userRepo, deviceRepo, wgManager, deviceCache, diagnosticsService)
 	adminHandler := api.NewAdminHandler(networkScanner)
 	biometricAuthHandler := api.NewBiometricAuthHandler(biometricAuthService)
 	deviceAuthHandler := api.NewDeviceAuthHandler(deviceAuthService, authService, firebaseService, deviceService, wgManager, userRepo, deviceRepo)
@@ -247,6 +261,15 @@ func runServe(cmd *cobra.Command, args []string) {
 			r.Delete("/{device_id}", deviceHandler.DeleteDevice)
 			r.Get("/{device_id}/config", deviceHandler.GetDeviceConfig)
 			r.Post("/heartbeat", deviceHandler.Heartbeat)
+
+			// Diagnostics endpoints
+			r.Post("/{device_id}/trigger-doctor", deviceHandler.TriggerDoctor)
+			r.Get("/{device_id}/diagnostics/{request_id}", deviceHandler.GetDiagnosticsReport)
+			r.Get("/{device_id}/diagnostics", deviceHandler.GetAllDiagnosticsReports)
+
+			// Daemon diagnostics endpoints (server-as-proxy)
+			r.Get("/diagnostics/pending", deviceHandler.GetPendingDiagnostics)
+			r.Post("/diagnostics/report", deviceHandler.UploadDiagnosticsReport)
 		})
 
 		// SSH Tunnel management

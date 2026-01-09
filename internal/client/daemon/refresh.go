@@ -11,6 +11,7 @@ import (
 
 	"github.com/kamikazebr/roamie-desktop/internal/client/api"
 	"github.com/kamikazebr/roamie-desktop/internal/client/config"
+	"github.com/kamikazebr/roamie-desktop/internal/client/diagnostics"
 	"github.com/kamikazebr/roamie-desktop/internal/client/ssh"
 	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
 	"github.com/kamikazebr/roamie-desktop/internal/client/upgrade"
@@ -53,6 +54,10 @@ func Run(ctx context.Context) error {
 	// Auto-upgrade ticker (check every 24 hours)
 	upgradeTicker := time.NewTicker(24 * time.Hour)
 	defer upgradeTicker.Stop()
+
+	// Diagnostics ticker (check for pending requests every 30 seconds)
+	diagnosticsTicker := time.NewTicker(30 * time.Second)
+	defer diagnosticsTicker.Stop()
 
 	// Tunnel state management
 	var tunnelClient *tunnel.Client
@@ -186,6 +191,12 @@ func Run(ctx context.Context) error {
 				if err := checkAndAutoUpgrade(upgradeCfg); err != nil {
 					log.Printf("Auto-upgrade check failed: %v", err)
 				}
+			}
+
+		case <-diagnosticsTicker.C:
+			// Check for pending diagnostics requests
+			if err := checkAndRunDiagnostics(); err != nil {
+				log.Printf("Diagnostics check failed: %v", err)
 			}
 		}
 	}
@@ -492,4 +503,55 @@ func restartDaemon() {
 		}
 		os.Exit(0)
 	}
+}
+
+// checkAndRunDiagnostics checks for pending diagnostics requests and runs them
+func checkAndRunDiagnostics() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if cfg == nil {
+		return fmt.Errorf("no configuration found")
+	}
+
+	// Skip if not authenticated
+	if cfg.JWT == "" {
+		return nil
+	}
+
+	// Check for pending diagnostics requests
+	client := api.NewClient(cfg.ServerURL)
+	pending, err := client.GetPendingDiagnostics(cfg.JWT)
+	if err != nil {
+		return fmt.Errorf("failed to get pending diagnostics: %w", err)
+	}
+
+	// Process each pending request
+	for _, req := range pending.PendingRequests {
+		log.Printf("Running diagnostics for request %s...", req.RequestID)
+
+		// Run doctor checks programmatically
+		report := diagnostics.RunDoctorProgrammatic()
+
+		// Upload results to server
+		if err := client.UploadDiagnosticsReport(cfg.JWT, map[string]interface{}{
+			"request_id":     req.RequestID,
+			"device_id":      req.DeviceID,
+			"checks":         report.Checks,
+			"summary":        report.Summary,
+			"client_version": report.ClientVersion,
+			"os":             report.OS,
+			"platform":       report.Platform,
+			"ran_at":         report.RanAt,
+		}); err != nil {
+			log.Printf("Failed to upload diagnostics report: %v", err)
+			continue
+		}
+
+		log.Printf("✓ Diagnostics report uploaded successfully for request %s", req.RequestID)
+	}
+
+	return nil
 }

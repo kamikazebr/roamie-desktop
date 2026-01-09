@@ -527,3 +527,73 @@ func (c *Client) DisableTunnel(deviceID, jwt string) error {
 
 	return nil
 }
+
+// PendingDiagnosticsRequest represents a pending diagnostics request
+type PendingDiagnosticsRequest struct {
+	RequestID  string `json:"request_id"`
+	DeviceID   string `json:"device_id"`
+	DeviceName string `json:"device_name"`
+}
+
+// PendingDiagnosticsResponse represents the response from GET /api/devices/diagnostics/pending
+type PendingDiagnosticsResponse struct {
+	PendingRequests []PendingDiagnosticsRequest `json:"pending_requests"`
+	Count           int                         `json:"count"`
+}
+
+// GetPendingDiagnostics fetches all pending diagnostics requests for the authenticated user's devices
+func (c *Client) GetPendingDiagnostics(jwt string) (*PendingDiagnosticsResponse, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/devices/diagnostics/pending", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwt)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result PendingDiagnosticsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// UploadDiagnosticsReport uploads a diagnostics report to the server
+func (c *Client) UploadDiagnosticsReport(jwt string, report interface{}) error {
+	body, err := json.Marshal(report)
+	if err != nil {
+		return fmt.Errorf("failed to marshal report: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/api/devices/diagnostics/report", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}

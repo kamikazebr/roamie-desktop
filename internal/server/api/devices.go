@@ -13,11 +13,12 @@ import (
 )
 
 type DeviceHandler struct {
-	deviceService *services.DeviceService
-	userRepo      *storage.UserRepository
-	deviceRepo    *storage.DeviceRepository
-	wgManager     *wireguard.Manager
-	deviceCache   *services.DeviceCache
+	deviceService       *services.DeviceService
+	userRepo            *storage.UserRepository
+	deviceRepo          *storage.DeviceRepository
+	wgManager           *wireguard.Manager
+	deviceCache         *services.DeviceCache
+	diagnosticsService  *services.DiagnosticsService
 }
 
 func NewDeviceHandler(
@@ -26,13 +27,15 @@ func NewDeviceHandler(
 	deviceRepo *storage.DeviceRepository,
 	wgManager *wireguard.Manager,
 	deviceCache *services.DeviceCache,
+	diagnosticsService *services.DiagnosticsService,
 ) *DeviceHandler {
 	return &DeviceHandler{
-		deviceService: deviceService,
-		userRepo:      userRepo,
-		deviceRepo:    deviceRepo,
-		wgManager:     wgManager,
-		deviceCache:   deviceCache,
+		deviceService:      deviceService,
+		userRepo:           userRepo,
+		deviceRepo:         deviceRepo,
+		wgManager:          wgManager,
+		deviceCache:        deviceCache,
+		diagnosticsService: diagnosticsService,
 	}
 }
 
@@ -292,5 +295,285 @@ func (h *DeviceHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 
 	respondJSON(w, http.StatusOK, map[string]string{
 		"status": "ok",
+	})
+}
+
+// TriggerDoctor creates a diagnostics request for a device
+func (h *DeviceHandler) TriggerDoctor(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Get device_id from URL parameter and parse as UUID
+	deviceIDStr := chi.URLParam(r, "device_id")
+	if deviceIDStr == "" {
+		respondErrorJSON(w, http.StatusBadRequest, "device_id is required")
+		return
+	}
+
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		respondErrorJSON(w, http.StatusBadRequest, "invalid device_id format")
+		return
+	}
+
+	// Verify device belongs to user
+	device, err := h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		respondErrorJSON(w, http.StatusNotFound, "device not found")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "diagnostics service not available (Firebase not configured)")
+		return
+	}
+
+	// Generate request ID
+	requestID := uuid.New().String()
+
+	// Create diagnostics request in Firestore
+	// Use DeviceName (the compound identifier) for Firestore lookups
+	req := &services.DiagnosticsRequest{
+		RequestID:   requestID,
+		DeviceID:    device.DeviceName, // Use device name as identifier for Firestore
+		UserID:      claims.UserID.String(),
+		RequestedBy: "api", // Could be "mobile_app" or "dashboard" in future
+		Status:      "pending",
+	}
+
+	if err := h.diagnosticsService.CreateDiagnosticsRequest(r.Context(), req); err != nil {
+		log.Printf("Failed to create diagnostics request: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to create diagnostics request")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"request_id":  requestID,
+		"device_id":   device.ID.String(),
+		"device_name": device.DeviceName,
+		"status":      "pending",
+		"message":     "Diagnostics request created. Device daemon will process it within 30 seconds.",
+	})
+}
+
+// GetDiagnosticsReport fetches a specific diagnostics report
+func (h *DeviceHandler) GetDiagnosticsReport(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Get device_id and request_id from URL parameters
+	deviceIDStr := chi.URLParam(r, "device_id")
+	requestID := chi.URLParam(r, "request_id")
+	if deviceIDStr == "" || requestID == "" {
+		respondErrorJSON(w, http.StatusBadRequest, "device_id and request_id are required")
+		return
+	}
+
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		respondErrorJSON(w, http.StatusBadRequest, "invalid device_id format")
+		return
+	}
+
+	// Verify device belongs to user
+	device, err := h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		respondErrorJSON(w, http.StatusNotFound, "device not found")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "diagnostics service not available (Firebase not configured)")
+		return
+	}
+
+	// Fetch report from Firestore
+	report, err := h.diagnosticsService.GetDiagnosticsReport(r.Context(), device.DeviceName, requestID)
+	if err != nil {
+		log.Printf("Failed to get diagnostics report: %v", err)
+		respondErrorJSON(w, http.StatusNotFound, "diagnostics report not found")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, report)
+}
+
+// UploadDiagnosticsReport accepts a diagnostics report from the client and saves it to Firestore
+func (h *DeviceHandler) UploadDiagnosticsReport(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "diagnostics service not available (Firebase not configured)")
+		return
+	}
+
+	// Decode report from request body
+	var report services.DiagnosticsReport
+	if err := decodeJSON(r, &report); err != nil {
+		respondErrorJSON(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate required fields
+	if report.DeviceID == "" || report.RequestID == "" {
+		respondErrorJSON(w, http.StatusBadRequest, "device_id and request_id are required")
+		return
+	}
+
+	// Find device by DeviceName (which is what we use as device_id in Firestore)
+	devices, err := h.deviceRepo.GetByUserID(r.Context(), claims.UserID)
+	if err != nil {
+		log.Printf("Failed to get user devices: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch devices")
+		return
+	}
+
+	// Verify device belongs to user
+	deviceFound := false
+	for _, device := range devices {
+		if device.DeviceName == report.DeviceID {
+			deviceFound = true
+			break
+		}
+	}
+
+	if !deviceFound {
+		respondErrorJSON(w, http.StatusForbidden, "device does not belong to user")
+		return
+	}
+
+	// Save report to Firestore
+	if err := h.diagnosticsService.SaveDiagnosticsReport(r.Context(), &report); err != nil {
+		log.Printf("Failed to save diagnostics report: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to save diagnostics report")
+		return
+	}
+
+	// Delete pending request
+	if err := h.diagnosticsService.DeletePendingRequest(r.Context(), report.DeviceID, report.RequestID); err != nil {
+		log.Printf("Failed to delete pending request: %v", err)
+		// Don't fail the request, just log the error
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "success",
+		"request_id": report.RequestID,
+		"device_id":  report.DeviceID,
+		"message":    "Diagnostics report saved successfully",
+	})
+}
+
+// GetPendingDiagnostics fetches all pending diagnostics requests for the authenticated user's devices
+func (h *DeviceHandler) GetPendingDiagnostics(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "diagnostics service not available (Firebase not configured)")
+		return
+	}
+
+	// Fetch all devices for the user
+	devices, err := h.deviceRepo.GetByUserID(r.Context(), claims.UserID)
+	if err != nil {
+		log.Printf("Failed to get user devices: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch devices")
+		return
+	}
+
+	// Fetch pending requests for each device
+	type PendingRequest struct {
+		RequestID  string `json:"request_id"`
+		DeviceID   string `json:"device_id"`
+		DeviceName string `json:"device_name"`
+	}
+
+	var allPending []PendingRequest
+	for _, device := range devices {
+		pending, err := h.diagnosticsService.GetPendingRequests(r.Context(), device.DeviceName)
+		if err != nil {
+			log.Printf("Failed to get pending requests for device %s: %v", device.DeviceName, err)
+			continue // Skip this device but continue with others
+		}
+
+		for _, req := range pending {
+			allPending = append(allPending, PendingRequest{
+				RequestID:  req.RequestID,
+				DeviceID:   device.ID.String(),
+				DeviceName: device.DeviceName,
+			})
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"pending_requests": allPending,
+		"count":            len(allPending),
+	})
+}
+
+// GetAllDiagnosticsReports fetches all diagnostics reports for a device
+func (h *DeviceHandler) GetAllDiagnosticsReports(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Get device_id from URL parameter
+	deviceIDStr := chi.URLParam(r, "device_id")
+	if deviceIDStr == "" {
+		respondErrorJSON(w, http.StatusBadRequest, "device_id is required")
+		return
+	}
+
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		respondErrorJSON(w, http.StatusBadRequest, "invalid device_id format")
+		return
+	}
+
+	// Verify device belongs to user
+	device, err := h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		respondErrorJSON(w, http.StatusNotFound, "device not found")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "diagnostics service not available (Firebase not configured)")
+		return
+	}
+
+	// Fetch reports from Firestore (last 10)
+	reports, err := h.diagnosticsService.GetAllDiagnosticsReports(r.Context(), device.DeviceName, 10)
+	if err != nil {
+		log.Printf("Failed to get diagnostics reports: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch diagnostics reports")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"device_id":   device.ID.String(),
+		"device_name": device.DeviceName,
+		"reports":     reports,
+		"count":       len(reports),
 	})
 }

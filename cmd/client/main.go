@@ -1117,21 +1117,6 @@ func runSystemctlUser(action, service string) error {
 	return cmd.Run()
 }
 
-func isServiceRunning(name string) bool {
-	sudoUser := os.Getenv("SUDO_USER")
-	uid := os.Getenv("SUDO_UID")
-
-	var cmd *exec.Cmd
-	if sudoUser != "" && uid != "" {
-		cmd = exec.Command("sudo", "-u", sudoUser,
-			"XDG_RUNTIME_DIR=/run/user/"+uid,
-			"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+uid+"/bus",
-			"systemctl", "--user", "is-active", "--quiet", name)
-	} else {
-		cmd = exec.Command("systemctl", "--user", "is-active", "--quiet", name)
-	}
-	return cmd.Run() == nil
-}
 
 func runVPNInstall(cmd *cobra.Command, args []string) {
 	// Load config
@@ -1300,146 +1285,72 @@ func runAutoUpgrade(cmd *cobra.Command, args []string) {
 	}
 }
 
+// isServiceRunning checks if a systemd user service is running
+func isServiceRunning(name string) bool {
+	sudoUser := os.Getenv("SUDO_USER")
+	uid := os.Getenv("SUDO_UID")
+
+	var cmd *exec.Cmd
+	if sudoUser != "" && uid != "" {
+		cmd = exec.Command("sudo", "-u", sudoUser,
+			"XDG_RUNTIME_DIR=/run/user/"+uid,
+			"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/"+uid+"/bus",
+			"systemctl", "--user", "is-active", "--quiet", name)
+	} else {
+		cmd = exec.Command("systemctl", "--user", "is-active", "--quiet", name)
+	}
+	return cmd.Run() == nil
+}
+
 func runDoctor(cmd *cobra.Command, args []string) {
 	fmt.Println("Roamie Doctor")
 	fmt.Println("=============")
 	fmt.Println()
 
-	passed := 0
-	warnings := 0
-	errors := 0
+	cfg, _ := config.Load()
+	categories := GetDoctorChecks()
 
-	// Check 1: Config loaded
-	fmt.Print("Authentication\n")
-	cfg, err := config.Load()
-	if err != nil {
-		fmt.Printf("  ✗ Config error: %v\n", err)
-		errors++
-	} else if cfg == nil {
-		fmt.Println("  ✗ Not logged in")
-		fmt.Println("    Run: roamie auth login")
-		errors++
-	} else {
-		fmt.Println("  ✓ Config loaded")
-		passed++
+	summary := DoctorSummary{}
+	var currentCategory string
 
-		// Check JWT validity
-		if cfg.IsExpired() {
-			fmt.Println("  ✗ JWT expired")
-			fmt.Println("    Run: roamie auth refresh")
-			errors++
-		} else {
-			expiresIn := cfg.ExpiresIn()
-			if expiresIn < 24*time.Hour {
-				fmt.Printf("  ⚠️  JWT expires soon (%s)\n", expiresIn.Round(time.Hour))
-				fmt.Println("    Run: roamie auth refresh")
-				warnings++
-			} else {
-				fmt.Printf("  ✓ JWT valid (%s remaining)\n", expiresIn.Round(time.Hour))
-				passed++
+	for _, category := range categories {
+		for _, checkFunc := range category.Checks {
+			result := checkFunc(cfg)
+
+			// Print category header if changed
+			if result.Category != currentCategory {
+				if currentCategory != "" {
+					fmt.Println()
+				}
+				fmt.Printf("%s\n", result.Category)
+				currentCategory = result.Category
+			}
+
+			// Print check result
+			fmt.Printf("  %s %s\n", result.Status.Symbol(), result.Message)
+			for _, fix := range result.Fixes {
+				fmt.Printf("    %s\n", fix)
+			}
+
+			// Update summary
+			switch result.Status {
+			case CheckPassed:
+				summary.Passed++
+			case CheckWarning:
+				summary.Warnings++
+			case CheckError:
+				summary.Errors++
+			case CheckInfo:
+				summary.Info++
 			}
 		}
-
-		// Check server reachability
-		client := api.NewClient(cfg.ServerURL)
-		if err := client.HealthCheck(); err != nil {
-			fmt.Printf("  ✗ Server unreachable: %v\n", err)
-			errors++
-		} else {
-			fmt.Printf("  ✓ Server reachable (%s)\n", cfg.ServerURL)
-			passed++
-		}
 	}
+
 	fmt.Println()
+	fmt.Printf("Summary: %d passed, %d warnings, %d errors\n",
+		summary.Passed, summary.Warnings, summary.Errors)
 
-	// Check 2: Network
-	fmt.Print("Network\n")
-
-	// WireGuard installed
-	if wireguard.CheckInstalled() {
-		fmt.Println("  ✓ WireGuard installed")
-		passed++
-	} else {
-		fmt.Println("  ⚠️  WireGuard not installed")
-		fmt.Println("    Run: roamie vpn install")
-		warnings++
-	}
-
-	// VPN status (if config exists)
-	if cfg != nil && cfg.VPNEnabled {
-		if cfg.VpnIP != "" {
-			fmt.Printf("  ✓ VPN configured (IP: %s)\n", cfg.VpnIP)
-			passed++
-		} else {
-			fmt.Println("  ⚠️  VPN enabled but not configured")
-			warnings++
-		}
-	} else if cfg != nil {
-		fmt.Println("  ⚠️  VPN disabled (SSH tunnel only)")
-		warnings++
-	}
-	fmt.Println()
-
-	// Check 3: Services
-	fmt.Print("Services\n")
-
-	// Daemon status
-	if isServiceRunning("roamie") {
-		fmt.Println("  ✓ Daemon running")
-		passed++
-	} else {
-		fmt.Println("  ⚠️  Daemon not running")
-		fmt.Println("    Run: roamie setup-daemon")
-		warnings++
-	}
-
-	// Tunnel status
-	if cfg != nil {
-		if cfg.TunnelEnabled && cfg.TunnelPort > 0 {
-			fmt.Printf("  ✓ Tunnel enabled (port %d)\n", cfg.TunnelPort)
-			passed++
-		} else if cfg.TunnelPort > 0 {
-			fmt.Printf("  ⚠️  Tunnel registered but disabled (port %d)\n", cfg.TunnelPort)
-			fmt.Println("    Run: roamie tunnel enable")
-			warnings++
-		} else {
-			fmt.Println("  ⚠️  Tunnel not registered")
-			fmt.Println("    Run: roamie tunnel register")
-			warnings++
-		}
-
-		// Auto-upgrade status
-		if cfg.AutoUpgradeEnabled {
-			fmt.Println("  ✓ Auto-upgrade enabled")
-			passed++
-		} else {
-			fmt.Println("  ⚠️  Auto-upgrade disabled")
-			fmt.Println("    Run: roamie auto-upgrade on")
-			warnings++
-		}
-	}
-	fmt.Println()
-
-	// Check 4: Updates
-	fmt.Print("Updates\n")
-	result, err := upgrade.CheckForUpdates()
-	if err != nil {
-		fmt.Printf("  ⚠️  Could not check for updates: %v\n", err)
-		warnings++
-	} else if result.UpdateAvailable {
-		fmt.Printf("  ⚠️  Update available: %s → %s\n", result.CurrentVersion, result.LatestVersion)
-		fmt.Println("    Run: roamie upgrade")
-		warnings++
-	} else {
-		fmt.Printf("  ✓ Up to date (%s)\n", result.CurrentVersion)
-		passed++
-	}
-	fmt.Println()
-
-	// Summary
-	fmt.Printf("Summary: %d passed, %d warnings, %d errors\n", passed, warnings, errors)
-
-	if errors > 0 {
+	if summary.Errors > 0 {
 		os.Exit(1)
 	}
 }
