@@ -73,9 +73,10 @@ services:
       TUNNEL_PORT_END: ${DEV_TUNNEL_PORT_END}
 
       # Firebase (Optional)
-      FIREBASE_CREDENTIALS_PATH: ${DEV_FIREBASE_CREDENTIALS_PATH}
+      FIREBASE_CREDENTIALS_PATH: ${DEV_FIREBASE_CREDENTIALS_PATH:-/app/config/firebase-credentials.json}
     volumes:
       - roamie_dev_wireguard:/etc/wireguard
+      - ${DEV_FIREBASE_HOST_PATH:-/root/config/firebase-service-account.json}:/app/config/firebase-credentials.json:ro
     ports:
       # DEV ports - different from production
       - "${DEV_WG_PORT:-51821}:51821/udp"
