@@ -644,19 +644,7 @@ func checkAndRunUpgrade() error {
 
 		// Check if update is available
 		if !updateCheck.UpdateAvailable {
-			log.Printf("No update available (current: %s, latest: %s)", currentVersion, updateCheck.LatestVersion)
-			// Upload result indicating no update needed
-			if uploadErr := client.UploadUpgradeResult(cfg.JWT, map[string]interface{}{
-				"request_id":       req.RequestID,
-				"device_id":        req.DeviceName,
-				"success":          true,
-				"previous_version": currentVersion,
-				"new_version":      currentVersion,
-				"error_message":    "Already on latest version",
-				"ran_at":           time.Now().UTC(),
-			}); uploadErr != nil {
-				log.Printf("Failed to upload upgrade result: %v", uploadErr)
-			}
+			log.Printf("No update available (current: %s, latest: %s) - skipping upload to avoid spam", currentVersion, updateCheck.LatestVersion)
 			continue
 		}
 
