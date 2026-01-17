@@ -383,7 +383,7 @@ func (h *DeviceHandler) GetDiagnosticsReport(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Verify device belongs to user
-	device, err := h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
+	_, err = h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
 	if err != nil {
 		respondErrorJSON(w, http.StatusNotFound, "device not found")
 		return
@@ -396,7 +396,7 @@ func (h *DeviceHandler) GetDiagnosticsReport(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Fetch report from Firestore
-	report, err := h.diagnosticsService.GetDiagnosticsReport(r.Context(), device.DeviceName, requestID)
+	report, err := h.diagnosticsService.GetDiagnosticsReport(r.Context(), claims.UserID.String(), requestID)
 	if err != nil {
 		log.Printf("Failed to get diagnostics report: %v", err)
 		respondErrorJSON(w, http.StatusNotFound, "diagnostics report not found")
@@ -456,14 +456,14 @@ func (h *DeviceHandler) UploadDiagnosticsReport(w http.ResponseWriter, r *http.R
 	}
 
 	// Save report to Firestore
-	if err := h.diagnosticsService.SaveDiagnosticsReport(r.Context(), &report); err != nil {
+	if err := h.diagnosticsService.SaveDiagnosticsReport(r.Context(), claims.UserID.String(), &report); err != nil {
 		log.Printf("Failed to save diagnostics report: %v", err)
 		respondErrorJSON(w, http.StatusInternalServerError, "failed to save diagnostics report")
 		return
 	}
 
 	// Delete pending request
-	if err := h.diagnosticsService.DeletePendingRequest(r.Context(), report.DeviceID, report.RequestID); err != nil {
+	if err := h.diagnosticsService.DeletePendingRequest(r.Context(), claims.UserID.String(), report.RequestID); err != nil {
 		log.Printf("Failed to delete pending request: %v", err)
 		// Don't fail the request, just log the error
 	}
@@ -490,41 +490,17 @@ func (h *DeviceHandler) GetPendingDiagnostics(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Fetch all devices for the user
-	devices, err := h.deviceRepo.GetByUserID(r.Context(), claims.UserID)
+	// Fetch pending requests for the user
+	pending, err := h.diagnosticsService.GetPendingRequests(r.Context(), claims.UserID.String())
 	if err != nil {
-		log.Printf("Failed to get user devices: %v", err)
-		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch devices")
+		log.Printf("Failed to get pending requests for user %s: %v", claims.UserID, err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch pending diagnostics requests")
 		return
 	}
 
-	// Fetch pending requests for each device
-	type PendingRequest struct {
-		RequestID  string `json:"request_id"`
-		DeviceID   string `json:"device_id"`
-		DeviceName string `json:"device_name"`
-	}
-
-	var allPending []PendingRequest
-	for _, device := range devices {
-		pending, err := h.diagnosticsService.GetPendingRequests(r.Context(), device.DeviceName)
-		if err != nil {
-			log.Printf("Failed to get pending requests for device %s: %v", device.DeviceName, err)
-			continue // Skip this device but continue with others
-		}
-
-		for _, req := range pending {
-			allPending = append(allPending, PendingRequest{
-				RequestID:  req.RequestID,
-				DeviceID:   device.ID.String(),
-				DeviceName: device.DeviceName,
-			})
-		}
-	}
-
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"pending_requests": allPending,
-		"count":            len(allPending),
+		"pending_requests": pending,
+		"count":            len(pending),
 	})
 }
 
@@ -671,7 +647,7 @@ func (h *DeviceHandler) GetUpgradeResult(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Verify device belongs to user
-	device, err := h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
+	_, err = h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
 	if err != nil {
 		respondErrorJSON(w, http.StatusNotFound, "device not found")
 		return
@@ -684,7 +660,7 @@ func (h *DeviceHandler) GetUpgradeResult(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Fetch result from Firestore
-	result, err := h.diagnosticsService.GetUpgradeResult(r.Context(), device.DeviceName, requestID)
+	result, err := h.diagnosticsService.GetUpgradeResult(r.Context(), claims.UserID.String(), requestID)
 	if err != nil {
 		log.Printf("Failed to get upgrade result: %v", err)
 		respondErrorJSON(w, http.StatusNotFound, "upgrade result not found")
@@ -744,14 +720,14 @@ func (h *DeviceHandler) UploadUpgradeResult(w http.ResponseWriter, r *http.Reque
 	}
 
 	// Save result to Firestore
-	if err := h.diagnosticsService.SaveUpgradeResult(r.Context(), &result); err != nil {
+	if err := h.diagnosticsService.SaveUpgradeResult(r.Context(), claims.UserID.String(), &result); err != nil {
 		log.Printf("Failed to save upgrade result: %v", err)
 		respondErrorJSON(w, http.StatusInternalServerError, "failed to save upgrade result")
 		return
 	}
 
 	// Delete pending request
-	if err := h.diagnosticsService.DeletePendingUpgrade(r.Context(), result.DeviceID, result.RequestID); err != nil {
+	if err := h.diagnosticsService.DeletePendingUpgrade(r.Context(), claims.UserID.String(), result.RequestID); err != nil {
 		log.Printf("Failed to delete pending upgrade: %v", err)
 		// Don't fail the request, just log the error
 	}
@@ -778,42 +754,16 @@ func (h *DeviceHandler) GetPendingUpgrades(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Fetch all devices for the user
-	devices, err := h.deviceRepo.GetByUserID(r.Context(), claims.UserID)
+	// Fetch pending upgrades for the user
+	pending, err := h.diagnosticsService.GetPendingUpgrades(r.Context(), claims.UserID.String())
 	if err != nil {
-		log.Printf("Failed to get user devices: %v", err)
-		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch devices")
+		log.Printf("Failed to get pending upgrades for user %s: %v", claims.UserID, err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch pending upgrades")
 		return
 	}
 
-	// Fetch pending requests for each device
-	type PendingUpgrade struct {
-		RequestID     string `json:"request_id"`
-		DeviceID      string `json:"device_id"`
-		DeviceName    string `json:"device_name"`
-		TargetVersion string `json:"target_version,omitempty"`
-	}
-
-	var allPending []PendingUpgrade
-	for _, device := range devices {
-		pending, err := h.diagnosticsService.GetPendingUpgrades(r.Context(), device.DeviceName)
-		if err != nil {
-			log.Printf("Failed to get pending upgrades for device %s: %v", device.DeviceName, err)
-			continue // Skip this device but continue with others
-		}
-
-		for _, req := range pending {
-			allPending = append(allPending, PendingUpgrade{
-				RequestID:     req.RequestID,
-				DeviceID:      device.ID.String(),
-				DeviceName:    device.DeviceName,
-				TargetVersion: req.TargetVersion,
-			})
-		}
-	}
-
 	respondJSON(w, http.StatusOK, map[string]interface{}{
-		"pending_upgrades": allPending,
-		"count":            len(allPending),
+		"pending_upgrades": pending,
+		"count":            len(pending),
 	})
 }

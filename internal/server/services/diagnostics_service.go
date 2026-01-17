@@ -82,10 +82,10 @@ func NewDiagnosticsService(ctx context.Context) (*DiagnosticsService, error) {
 }
 
 // CreateDiagnosticsRequest creates a new diagnostics request in Firestore
-// Path: diagnostics_requests/{device_id}/pending/{request_id}
+// Path: users/{user_id}/diagnostics_requests/{request_id}
 func (s *DiagnosticsService) CreateDiagnosticsRequest(ctx context.Context, req *DiagnosticsRequest) error {
-	if req.DeviceID == "" {
-		return fmt.Errorf("device_id is required")
+	if req.UserID == "" {
+		return fmt.Errorf("user_id is required")
 	}
 	if req.RequestID == "" {
 		return fmt.Errorf("request_id is required")
@@ -101,9 +101,9 @@ func (s *DiagnosticsService) CreateDiagnosticsRequest(ctx context.Context, req *
 
 	// Write to Firestore
 	_, err := s.firestoreClient.
+		Collection("users").
+		Doc(req.UserID).
 		Collection("diagnostics_requests").
-		Doc(req.DeviceID).
-		Collection("pending").
 		Doc(req.RequestID).
 		Set(ctx, req)
 
@@ -114,17 +114,18 @@ func (s *DiagnosticsService) CreateDiagnosticsRequest(ctx context.Context, req *
 	return nil
 }
 
-// GetPendingRequests fetches all pending diagnostics requests for a device
-// Path: diagnostics_requests/{device_id}/pending
-func (s *DiagnosticsService) GetPendingRequests(ctx context.Context, deviceID string) ([]DiagnosticsRequest, error) {
-	if deviceID == "" {
-		return nil, fmt.Errorf("device_id is required")
+// GetPendingRequests fetches all pending diagnostics requests for a user
+// Path: users/{user_id}/diagnostics_requests (filtered by status == "pending")
+func (s *DiagnosticsService) GetPendingRequests(ctx context.Context, userID string) ([]DiagnosticsRequest, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("user_id is required")
 	}
 
 	iter := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("diagnostics_requests").
-		Doc(deviceID).
-		Collection("pending").
+		Where("status", "==", "pending").
 		Documents(ctx)
 
 	var requests []DiagnosticsRequest
@@ -149,16 +150,16 @@ func (s *DiagnosticsService) GetPendingRequests(ctx context.Context, deviceID st
 }
 
 // DeletePendingRequest deletes a pending request after completion
-// Path: diagnostics_requests/{device_id}/pending/{request_id}
-func (s *DiagnosticsService) DeletePendingRequest(ctx context.Context, deviceID, requestID string) error {
-	if deviceID == "" || requestID == "" {
-		return fmt.Errorf("device_id and request_id are required")
+// Path: users/{user_id}/diagnostics_requests/{request_id}
+func (s *DiagnosticsService) DeletePendingRequest(ctx context.Context, userID, requestID string) error {
+	if userID == "" || requestID == "" {
+		return fmt.Errorf("user_id and request_id are required")
 	}
 
 	_, err := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("diagnostics_requests").
-		Doc(deviceID).
-		Collection("pending").
 		Doc(requestID).
 		Delete(ctx)
 
@@ -170,10 +171,13 @@ func (s *DiagnosticsService) DeletePendingRequest(ctx context.Context, deviceID,
 }
 
 // SaveDiagnosticsReport saves a completed diagnostics report
-// Path: diagnostics_reports/{device_id}/{request_id}
-func (s *DiagnosticsService) SaveDiagnosticsReport(ctx context.Context, report *DiagnosticsReport) error {
-	if report.DeviceID == "" || report.RequestID == "" {
-		return fmt.Errorf("device_id and request_id are required")
+// Path: users/{user_id}/diagnostics_reports/{request_id}
+func (s *DiagnosticsService) SaveDiagnosticsReport(ctx context.Context, userID string, report *DiagnosticsReport) error {
+	if userID == "" {
+		return fmt.Errorf("user_id is required")
+	}
+	if report.RequestID == "" {
+		return fmt.Errorf("request_id is required")
 	}
 
 	// Set timestamp if not set
@@ -182,9 +186,9 @@ func (s *DiagnosticsService) SaveDiagnosticsReport(ctx context.Context, report *
 	}
 
 	_, err := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("diagnostics_reports").
-		Doc(report.DeviceID).
-		Collection("reports").
 		Doc(report.RequestID).
 		Set(ctx, report)
 
@@ -196,16 +200,16 @@ func (s *DiagnosticsService) SaveDiagnosticsReport(ctx context.Context, report *
 }
 
 // GetDiagnosticsReport fetches a specific diagnostics report
-// Path: diagnostics_reports/{device_id}/{request_id}
-func (s *DiagnosticsService) GetDiagnosticsReport(ctx context.Context, deviceID, requestID string) (*DiagnosticsReport, error) {
-	if deviceID == "" || requestID == "" {
-		return nil, fmt.Errorf("device_id and request_id are required")
+// Path: users/{user_id}/diagnostics_reports/{request_id}
+func (s *DiagnosticsService) GetDiagnosticsReport(ctx context.Context, userID, requestID string) (*DiagnosticsReport, error) {
+	if userID == "" || requestID == "" {
+		return nil, fmt.Errorf("user_id and request_id are required")
 	}
 
 	doc, err := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("diagnostics_reports").
-		Doc(deviceID).
-		Collection("reports").
 		Doc(requestID).
 		Get(ctx)
 
@@ -221,11 +225,11 @@ func (s *DiagnosticsService) GetDiagnosticsReport(ctx context.Context, deviceID,
 	return &report, nil
 }
 
-// GetAllDiagnosticsReports fetches all diagnostics reports for a device (last N)
-// Path: diagnostics_reports/{device_id}/reports
-func (s *DiagnosticsService) GetAllDiagnosticsReports(ctx context.Context, deviceID string, limit int) ([]DiagnosticsReport, error) {
-	if deviceID == "" {
-		return nil, fmt.Errorf("device_id is required")
+// GetAllDiagnosticsReports fetches all diagnostics reports for a user (last N)
+// Path: users/{user_id}/diagnostics_reports
+func (s *DiagnosticsService) GetAllDiagnosticsReports(ctx context.Context, userID string, limit int) ([]DiagnosticsReport, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("user_id is required")
 	}
 
 	if limit <= 0 {
@@ -233,9 +237,9 @@ func (s *DiagnosticsService) GetAllDiagnosticsReports(ctx context.Context, devic
 	}
 
 	query := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("diagnostics_reports").
-		Doc(deviceID).
-		Collection("reports").
 		OrderBy("ran_at", firestore.Desc).
 		Limit(limit)
 
@@ -263,17 +267,17 @@ func (s *DiagnosticsService) GetAllDiagnosticsReports(ctx context.Context, devic
 }
 
 // CleanupOldRequests deletes pending requests older than the specified duration
-func (s *DiagnosticsService) CleanupOldRequests(ctx context.Context, deviceID string, olderThan time.Duration) error {
-	if deviceID == "" {
-		return fmt.Errorf("device_id is required")
+func (s *DiagnosticsService) CleanupOldRequests(ctx context.Context, userID string, olderThan time.Duration) error {
+	if userID == "" {
+		return fmt.Errorf("user_id is required")
 	}
 
 	cutoffTime := time.Now().UTC().Add(-olderThan)
 
 	iter := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("diagnostics_requests").
-		Doc(deviceID).
-		Collection("pending").
 		Where("requested_at", "<", cutoffTime).
 		Documents(ctx)
 
@@ -326,10 +330,10 @@ type UpgradeResult struct {
 }
 
 // CreateUpgradeRequest creates a new upgrade request in Firestore
-// Path: upgrade_requests/{device_id}/pending/{request_id}
+// Path: users/{user_id}/upgrade_requests/{request_id}
 func (s *DiagnosticsService) CreateUpgradeRequest(ctx context.Context, req *UpgradeRequest) error {
-	if req.DeviceID == "" {
-		return fmt.Errorf("device_id is required")
+	if req.UserID == "" {
+		return fmt.Errorf("user_id is required")
 	}
 	if req.RequestID == "" {
 		return fmt.Errorf("request_id is required")
@@ -345,9 +349,9 @@ func (s *DiagnosticsService) CreateUpgradeRequest(ctx context.Context, req *Upgr
 
 	// Write to Firestore
 	_, err := s.firestoreClient.
+		Collection("users").
+		Doc(req.UserID).
 		Collection("upgrade_requests").
-		Doc(req.DeviceID).
-		Collection("pending").
 		Doc(req.RequestID).
 		Set(ctx, req)
 
@@ -358,17 +362,18 @@ func (s *DiagnosticsService) CreateUpgradeRequest(ctx context.Context, req *Upgr
 	return nil
 }
 
-// GetPendingUpgrades fetches all pending upgrade requests for a device
-// Path: upgrade_requests/{device_id}/pending
-func (s *DiagnosticsService) GetPendingUpgrades(ctx context.Context, deviceID string) ([]UpgradeRequest, error) {
-	if deviceID == "" {
-		return nil, fmt.Errorf("device_id is required")
+// GetPendingUpgrades fetches all pending upgrade requests for a user
+// Path: users/{user_id}/upgrade_requests (filtered by status == "pending")
+func (s *DiagnosticsService) GetPendingUpgrades(ctx context.Context, userID string) ([]UpgradeRequest, error) {
+	if userID == "" {
+		return nil, fmt.Errorf("user_id is required")
 	}
 
 	iter := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("upgrade_requests").
-		Doc(deviceID).
-		Collection("pending").
+		Where("status", "==", "pending").
 		Documents(ctx)
 
 	var requests []UpgradeRequest
@@ -393,16 +398,16 @@ func (s *DiagnosticsService) GetPendingUpgrades(ctx context.Context, deviceID st
 }
 
 // DeletePendingUpgrade deletes a pending upgrade request after completion
-// Path: upgrade_requests/{device_id}/pending/{request_id}
-func (s *DiagnosticsService) DeletePendingUpgrade(ctx context.Context, deviceID, requestID string) error {
-	if deviceID == "" || requestID == "" {
-		return fmt.Errorf("device_id and request_id are required")
+// Path: users/{user_id}/upgrade_requests/{request_id}
+func (s *DiagnosticsService) DeletePendingUpgrade(ctx context.Context, userID, requestID string) error {
+	if userID == "" || requestID == "" {
+		return fmt.Errorf("user_id and request_id are required")
 	}
 
 	_, err := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("upgrade_requests").
-		Doc(deviceID).
-		Collection("pending").
 		Doc(requestID).
 		Delete(ctx)
 
@@ -414,10 +419,13 @@ func (s *DiagnosticsService) DeletePendingUpgrade(ctx context.Context, deviceID,
 }
 
 // SaveUpgradeResult saves a completed upgrade result
-// Path: upgrade_results/{device_id}/{request_id}
-func (s *DiagnosticsService) SaveUpgradeResult(ctx context.Context, result *UpgradeResult) error {
-	if result.DeviceID == "" || result.RequestID == "" {
-		return fmt.Errorf("device_id and request_id are required")
+// Path: users/{user_id}/upgrade_results/{request_id}
+func (s *DiagnosticsService) SaveUpgradeResult(ctx context.Context, userID string, result *UpgradeResult) error {
+	if userID == "" {
+		return fmt.Errorf("user_id is required")
+	}
+	if result.RequestID == "" {
+		return fmt.Errorf("request_id is required")
 	}
 
 	// Set timestamp if not set
@@ -426,9 +434,9 @@ func (s *DiagnosticsService) SaveUpgradeResult(ctx context.Context, result *Upgr
 	}
 
 	_, err := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("upgrade_results").
-		Doc(result.DeviceID).
-		Collection("results").
 		Doc(result.RequestID).
 		Set(ctx, result)
 
@@ -440,16 +448,16 @@ func (s *DiagnosticsService) SaveUpgradeResult(ctx context.Context, result *Upgr
 }
 
 // GetUpgradeResult fetches a specific upgrade result
-// Path: upgrade_results/{device_id}/{request_id}
-func (s *DiagnosticsService) GetUpgradeResult(ctx context.Context, deviceID, requestID string) (*UpgradeResult, error) {
-	if deviceID == "" || requestID == "" {
-		return nil, fmt.Errorf("device_id and request_id are required")
+// Path: users/{user_id}/upgrade_results/{request_id}
+func (s *DiagnosticsService) GetUpgradeResult(ctx context.Context, userID, requestID string) (*UpgradeResult, error) {
+	if userID == "" || requestID == "" {
+		return nil, fmt.Errorf("user_id and request_id are required")
 	}
 
 	doc, err := s.firestoreClient.
+		Collection("users").
+		Doc(userID).
 		Collection("upgrade_results").
-		Doc(deviceID).
-		Collection("results").
 		Doc(requestID).
 		Get(ctx)
 
