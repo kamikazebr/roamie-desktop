@@ -577,3 +577,243 @@ func (h *DeviceHandler) GetAllDiagnosticsReports(w http.ResponseWriter, r *http.
 		"count":       len(reports),
 	})
 }
+
+// TriggerUpgrade creates an upgrade request for a device
+func (h *DeviceHandler) TriggerUpgrade(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Get device_id from URL parameter and parse as UUID
+	deviceIDStr := chi.URLParam(r, "device_id")
+	if deviceIDStr == "" {
+		respondErrorJSON(w, http.StatusBadRequest, "device_id is required")
+		return
+	}
+
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		respondErrorJSON(w, http.StatusBadRequest, "invalid device_id format")
+		return
+	}
+
+	// Verify device belongs to user
+	device, err := h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		respondErrorJSON(w, http.StatusNotFound, "device not found")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "upgrade service not available (Firebase not configured)")
+		return
+	}
+
+	// Parse optional request body for target version
+	var reqBody struct {
+		TargetVersion string `json:"target_version,omitempty"`
+	}
+	_ = decodeJSON(r, &reqBody) // Ignore error - target_version is optional
+
+	// Generate request ID
+	requestID := uuid.New().String()
+
+	// Create upgrade request in Firestore
+	// Use DeviceName (the compound identifier) for Firestore lookups
+	req := &services.UpgradeRequest{
+		RequestID:     requestID,
+		DeviceID:      device.DeviceName, // Use device name as identifier for Firestore
+		UserID:        claims.UserID.String(),
+		RequestedBy:   "api", // Could be "mobile_app" or "dashboard" in future
+		Status:        "pending",
+		TargetVersion: reqBody.TargetVersion,
+	}
+
+	if err := h.diagnosticsService.CreateUpgradeRequest(r.Context(), req); err != nil {
+		log.Printf("Failed to create upgrade request: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to create upgrade request")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"request_id":     requestID,
+		"device_id":      device.ID.String(),
+		"device_name":    device.DeviceName,
+		"status":         "pending",
+		"target_version": reqBody.TargetVersion,
+		"message":        "Upgrade request created. Device daemon will process it within 30 seconds.",
+	})
+}
+
+// GetUpgradeResult fetches a specific upgrade result
+func (h *DeviceHandler) GetUpgradeResult(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Get device_id and request_id from URL parameters
+	deviceIDStr := chi.URLParam(r, "device_id")
+	requestID := chi.URLParam(r, "request_id")
+	if deviceIDStr == "" || requestID == "" {
+		respondErrorJSON(w, http.StatusBadRequest, "device_id and request_id are required")
+		return
+	}
+
+	deviceID, err := uuid.Parse(deviceIDStr)
+	if err != nil {
+		respondErrorJSON(w, http.StatusBadRequest, "invalid device_id format")
+		return
+	}
+
+	// Verify device belongs to user
+	device, err := h.deviceService.GetDevice(r.Context(), deviceID, claims.UserID)
+	if err != nil {
+		respondErrorJSON(w, http.StatusNotFound, "device not found")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "upgrade service not available (Firebase not configured)")
+		return
+	}
+
+	// Fetch result from Firestore
+	result, err := h.diagnosticsService.GetUpgradeResult(r.Context(), device.DeviceName, requestID)
+	if err != nil {
+		log.Printf("Failed to get upgrade result: %v", err)
+		respondErrorJSON(w, http.StatusNotFound, "upgrade result not found")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, result)
+}
+
+// UploadUpgradeResult accepts an upgrade result from the client and saves it to Firestore
+func (h *DeviceHandler) UploadUpgradeResult(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "upgrade service not available (Firebase not configured)")
+		return
+	}
+
+	// Decode result from request body
+	var result services.UpgradeResult
+	if err := decodeJSON(r, &result); err != nil {
+		respondErrorJSON(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	// Validate required fields
+	if result.DeviceID == "" || result.RequestID == "" {
+		respondErrorJSON(w, http.StatusBadRequest, "device_id and request_id are required")
+		return
+	}
+
+	// Find device by DeviceName (which is what we use as device_id in Firestore)
+	devices, err := h.deviceRepo.GetByUserID(r.Context(), claims.UserID)
+	if err != nil {
+		log.Printf("Failed to get user devices: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch devices")
+		return
+	}
+
+	// Verify device belongs to user
+	deviceFound := false
+	for _, device := range devices {
+		if device.DeviceName == result.DeviceID {
+			deviceFound = true
+			break
+		}
+	}
+
+	if !deviceFound {
+		respondErrorJSON(w, http.StatusForbidden, "device does not belong to user")
+		return
+	}
+
+	// Save result to Firestore
+	if err := h.diagnosticsService.SaveUpgradeResult(r.Context(), &result); err != nil {
+		log.Printf("Failed to save upgrade result: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to save upgrade result")
+		return
+	}
+
+	// Delete pending request
+	if err := h.diagnosticsService.DeletePendingUpgrade(r.Context(), result.DeviceID, result.RequestID); err != nil {
+		log.Printf("Failed to delete pending upgrade: %v", err)
+		// Don't fail the request, just log the error
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"status":     "success",
+		"request_id": result.RequestID,
+		"device_id":  result.DeviceID,
+		"message":    "Upgrade result saved successfully",
+	})
+}
+
+// GetPendingUpgrades fetches all pending upgrade requests for the authenticated user's devices
+func (h *DeviceHandler) GetPendingUpgrades(w http.ResponseWriter, r *http.Request) {
+	claims := GetUserClaims(r)
+	if claims == nil {
+		respondErrorJSON(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	// Check if DiagnosticsService is available
+	if h.diagnosticsService == nil {
+		respondErrorJSON(w, http.StatusServiceUnavailable, "upgrade service not available (Firebase not configured)")
+		return
+	}
+
+	// Fetch all devices for the user
+	devices, err := h.deviceRepo.GetByUserID(r.Context(), claims.UserID)
+	if err != nil {
+		log.Printf("Failed to get user devices: %v", err)
+		respondErrorJSON(w, http.StatusInternalServerError, "failed to fetch devices")
+		return
+	}
+
+	// Fetch pending requests for each device
+	type PendingUpgrade struct {
+		RequestID     string `json:"request_id"`
+		DeviceID      string `json:"device_id"`
+		DeviceName    string `json:"device_name"`
+		TargetVersion string `json:"target_version,omitempty"`
+	}
+
+	var allPending []PendingUpgrade
+	for _, device := range devices {
+		pending, err := h.diagnosticsService.GetPendingUpgrades(r.Context(), device.DeviceName)
+		if err != nil {
+			log.Printf("Failed to get pending upgrades for device %s: %v", device.DeviceName, err)
+			continue // Skip this device but continue with others
+		}
+
+		for _, req := range pending {
+			allPending = append(allPending, PendingUpgrade{
+				RequestID:     req.RequestID,
+				DeviceID:      device.ID.String(),
+				DeviceName:    device.DeviceName,
+				TargetVersion: req.TargetVersion,
+			})
+		}
+	}
+
+	respondJSON(w, http.StatusOK, map[string]interface{}{
+		"pending_upgrades": allPending,
+		"count":            len(allPending),
+	})
+}

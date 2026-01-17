@@ -303,6 +303,168 @@ func (s *DiagnosticsService) CleanupOldRequests(ctx context.Context, deviceID st
 	return nil
 }
 
+// UpgradeRequest represents a pending upgrade request
+type UpgradeRequest struct {
+	RequestID   string    `firestore:"request_id" json:"request_id"`
+	DeviceID    string    `firestore:"device_id" json:"device_id"`
+	UserID      string    `firestore:"user_id" json:"user_id"`
+	RequestedAt time.Time `firestore:"requested_at" json:"requested_at"`
+	RequestedBy string    `firestore:"requested_by" json:"requested_by"`
+	Status      string    `firestore:"status" json:"status"` // pending, running, completed, failed
+	TargetVersion string  `firestore:"target_version,omitempty" json:"target_version,omitempty"` // Optional: specific version to upgrade to
+}
+
+// UpgradeResult represents a completed upgrade result
+type UpgradeResult struct {
+	RequestID      string    `firestore:"request_id" json:"request_id"`
+	DeviceID       string    `firestore:"device_id" json:"device_id"`
+	RanAt          time.Time `firestore:"ran_at" json:"ran_at"`
+	Success        bool      `firestore:"success" json:"success"`
+	PreviousVersion string   `firestore:"previous_version" json:"previous_version"`
+	NewVersion     string    `firestore:"new_version" json:"new_version"`
+	ErrorMessage   string    `firestore:"error_message,omitempty" json:"error_message,omitempty"`
+}
+
+// CreateUpgradeRequest creates a new upgrade request in Firestore
+// Path: upgrade_requests/{device_id}/pending/{request_id}
+func (s *DiagnosticsService) CreateUpgradeRequest(ctx context.Context, req *UpgradeRequest) error {
+	if req.DeviceID == "" {
+		return fmt.Errorf("device_id is required")
+	}
+	if req.RequestID == "" {
+		return fmt.Errorf("request_id is required")
+	}
+
+	// Set defaults
+	if req.RequestedAt.IsZero() {
+		req.RequestedAt = time.Now().UTC()
+	}
+	if req.Status == "" {
+		req.Status = "pending"
+	}
+
+	// Write to Firestore
+	_, err := s.firestoreClient.
+		Collection("upgrade_requests").
+		Doc(req.DeviceID).
+		Collection("pending").
+		Doc(req.RequestID).
+		Set(ctx, req)
+
+	if err != nil {
+		return fmt.Errorf("failed to create upgrade request: %w", err)
+	}
+
+	return nil
+}
+
+// GetPendingUpgrades fetches all pending upgrade requests for a device
+// Path: upgrade_requests/{device_id}/pending
+func (s *DiagnosticsService) GetPendingUpgrades(ctx context.Context, deviceID string) ([]UpgradeRequest, error) {
+	if deviceID == "" {
+		return nil, fmt.Errorf("device_id is required")
+	}
+
+	iter := s.firestoreClient.
+		Collection("upgrade_requests").
+		Doc(deviceID).
+		Collection("pending").
+		Documents(ctx)
+
+	var requests []UpgradeRequest
+	for {
+		doc, err := iter.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to iterate pending upgrades: %w", err)
+		}
+
+		var req UpgradeRequest
+		if err := doc.DataTo(&req); err != nil {
+			return nil, fmt.Errorf("failed to parse upgrade request: %w", err)
+		}
+
+		requests = append(requests, req)
+	}
+
+	return requests, nil
+}
+
+// DeletePendingUpgrade deletes a pending upgrade request after completion
+// Path: upgrade_requests/{device_id}/pending/{request_id}
+func (s *DiagnosticsService) DeletePendingUpgrade(ctx context.Context, deviceID, requestID string) error {
+	if deviceID == "" || requestID == "" {
+		return fmt.Errorf("device_id and request_id are required")
+	}
+
+	_, err := s.firestoreClient.
+		Collection("upgrade_requests").
+		Doc(deviceID).
+		Collection("pending").
+		Doc(requestID).
+		Delete(ctx)
+
+	if err != nil {
+		return fmt.Errorf("failed to delete pending upgrade: %w", err)
+	}
+
+	return nil
+}
+
+// SaveUpgradeResult saves a completed upgrade result
+// Path: upgrade_results/{device_id}/{request_id}
+func (s *DiagnosticsService) SaveUpgradeResult(ctx context.Context, result *UpgradeResult) error {
+	if result.DeviceID == "" || result.RequestID == "" {
+		return fmt.Errorf("device_id and request_id are required")
+	}
+
+	// Set timestamp if not set
+	if result.RanAt.IsZero() {
+		result.RanAt = time.Now().UTC()
+	}
+
+	_, err := s.firestoreClient.
+		Collection("upgrade_results").
+		Doc(result.DeviceID).
+		Collection("results").
+		Doc(result.RequestID).
+		Set(ctx, result)
+
+	if err != nil {
+		return fmt.Errorf("failed to save upgrade result: %w", err)
+	}
+
+	return nil
+}
+
+// GetUpgradeResult fetches a specific upgrade result
+// Path: upgrade_results/{device_id}/{request_id}
+func (s *DiagnosticsService) GetUpgradeResult(ctx context.Context, deviceID, requestID string) (*UpgradeResult, error) {
+	if deviceID == "" || requestID == "" {
+		return nil, fmt.Errorf("device_id and request_id are required")
+	}
+
+	doc, err := s.firestoreClient.
+		Collection("upgrade_results").
+		Doc(deviceID).
+		Collection("results").
+		Doc(requestID).
+		Get(ctx)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to get upgrade result: %w", err)
+	}
+
+	var result UpgradeResult
+	if err := doc.DataTo(&result); err != nil {
+		return nil, fmt.Errorf("failed to parse upgrade result: %w", err)
+	}
+
+	return &result, nil
+}
+
 // Close closes the Firestore client
 func (s *DiagnosticsService) Close() error {
 	if s.firestoreClient != nil {

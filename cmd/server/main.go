@@ -270,6 +270,14 @@ func runServe(cmd *cobra.Command, args []string) {
 			// Daemon diagnostics endpoints (server-as-proxy)
 			r.Get("/diagnostics/pending", deviceHandler.GetPendingDiagnostics)
 			r.Post("/diagnostics/report", deviceHandler.UploadDiagnosticsReport)
+
+			// Upgrade endpoints
+			r.Post("/{device_id}/trigger-upgrade", deviceHandler.TriggerUpgrade)
+			r.Get("/{device_id}/upgrade/{request_id}", deviceHandler.GetUpgradeResult)
+
+			// Daemon upgrade endpoints (server-as-proxy)
+			r.Get("/upgrades/pending", deviceHandler.GetPendingUpgrades)
+			r.Post("/upgrades/result", deviceHandler.UploadUpgradeResult)
 		})
 
 		// SSH Tunnel management

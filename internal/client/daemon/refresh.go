@@ -59,6 +59,10 @@ func Run(ctx context.Context) error {
 	diagnosticsTicker := time.NewTicker(30 * time.Second)
 	defer diagnosticsTicker.Stop()
 
+	// Remote upgrade ticker (check for pending upgrade requests every 30 seconds)
+	remoteUpgradeTicker := time.NewTicker(30 * time.Second)
+	defer remoteUpgradeTicker.Stop()
+
 	// Tunnel state management
 	var tunnelClient *tunnel.Client
 	var tunnelCancel context.CancelFunc
@@ -83,6 +87,14 @@ func Run(ctx context.Context) error {
 	// Send initial heartbeat
 	if err := sendHeartbeat(); err != nil {
 		log.Printf("Initial heartbeat failed: %v", err)
+	}
+	// Check for pending diagnostics immediately on startup
+	if err := checkAndRunDiagnostics(); err != nil {
+		log.Printf("Initial diagnostics check failed: %v", err)
+	}
+	// Check for pending upgrades immediately on startup
+	if err := checkAndRunUpgrade(); err != nil {
+		log.Printf("Initial upgrade check failed: %v", err)
 	}
 
 	for {
@@ -197,6 +209,12 @@ func Run(ctx context.Context) error {
 			// Check for pending diagnostics requests
 			if err := checkAndRunDiagnostics(); err != nil {
 				log.Printf("Diagnostics check failed: %v", err)
+			}
+
+		case <-remoteUpgradeTicker.C:
+			// Check for pending remote upgrade requests
+			if err := checkAndRunUpgrade(); err != nil {
+				log.Printf("Remote upgrade check failed: %v", err)
 			}
 		}
 	}
@@ -535,11 +553,31 @@ func checkAndRunDiagnostics() error {
 		// Run doctor checks programmatically
 		report := diagnostics.RunDoctorProgrammatic()
 
+		// Convert checks to server format (status as string)
+		type ServerCheckResult struct {
+			Name     string   `json:"name"`
+			Category string   `json:"category"`
+			Status   string   `json:"status"`
+			Message  string   `json:"message"`
+			Fixes    []string `json:"fixes,omitempty"`
+		}
+
+		serverChecks := make([]ServerCheckResult, len(report.Checks))
+		for i, check := range report.Checks {
+			serverChecks[i] = ServerCheckResult{
+				Name:     check.Name,
+				Category: check.Category,
+				Status:   check.Status.String(), // Convert int to string
+				Message:  check.Message,
+				Fixes:    check.Fixes,
+			}
+		}
+
 		// Upload results to server
 		if err := client.UploadDiagnosticsReport(cfg.JWT, map[string]interface{}{
 			"request_id":     req.RequestID,
-			"device_id":      req.DeviceID,
-			"checks":         report.Checks,
+			"device_id":      req.DeviceName, // Use DeviceName, not UUID
+			"checks":         serverChecks,   // Use converted checks
 			"summary":        report.Summary,
 			"client_version": report.ClientVersion,
 			"os":             report.OS,
@@ -551,6 +589,124 @@ func checkAndRunDiagnostics() error {
 		}
 
 		log.Printf("✓ Diagnostics report uploaded successfully for request %s", req.RequestID)
+	}
+
+	return nil
+}
+
+// checkAndRunUpgrade checks for pending upgrade requests and executes them
+func checkAndRunUpgrade() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if cfg == nil {
+		return fmt.Errorf("no configuration found")
+	}
+
+	// Skip if not authenticated
+	if cfg.JWT == "" {
+		return nil
+	}
+
+	// Check for pending upgrade requests
+	client := api.NewClient(cfg.ServerURL)
+	pending, err := client.GetPendingUpgrades(cfg.JWT)
+	if err != nil {
+		return fmt.Errorf("failed to get pending upgrades: %w", err)
+	}
+
+	// Process each pending request
+	for _, req := range pending.PendingUpgrades {
+		log.Printf("Processing upgrade request %s (target version: %s)...", req.RequestID, req.TargetVersion)
+
+		currentVersion := version.Version
+
+		// Check for updates
+		updateCheck, err := upgrade.CheckForUpdates()
+		if err != nil {
+			log.Printf("Failed to check for updates: %v", err)
+			// Upload failure result
+			if uploadErr := client.UploadUpgradeResult(cfg.JWT, map[string]interface{}{
+				"request_id":       req.RequestID,
+				"device_id":        req.DeviceName,
+				"success":          false,
+				"previous_version": currentVersion,
+				"new_version":      currentVersion,
+				"error_message":    fmt.Sprintf("Failed to check for updates: %v", err),
+				"ran_at":           time.Now().UTC(),
+			}); uploadErr != nil {
+				log.Printf("Failed to upload upgrade failure result: %v", uploadErr)
+			}
+			continue
+		}
+
+		// Check if update is available
+		if !updateCheck.UpdateAvailable {
+			log.Printf("No update available (current: %s, latest: %s)", currentVersion, updateCheck.LatestVersion)
+			// Upload result indicating no update needed
+			if uploadErr := client.UploadUpgradeResult(cfg.JWT, map[string]interface{}{
+				"request_id":       req.RequestID,
+				"device_id":        req.DeviceName,
+				"success":          true,
+				"previous_version": currentVersion,
+				"new_version":      currentVersion,
+				"error_message":    "Already on latest version",
+				"ran_at":           time.Now().UTC(),
+			}); uploadErr != nil {
+				log.Printf("Failed to upload upgrade result: %v", uploadErr)
+			}
+			continue
+		}
+
+		log.Printf("Update available: %s -> %s", currentVersion, updateCheck.LatestVersion)
+
+		// Perform upgrade
+		if err := upgrade.Upgrade(updateCheck); err != nil {
+			log.Printf("Failed to perform upgrade: %v", err)
+			// Upload failure result
+			if uploadErr := client.UploadUpgradeResult(cfg.JWT, map[string]interface{}{
+				"request_id":       req.RequestID,
+				"device_id":        req.DeviceName,
+				"success":          false,
+				"previous_version": currentVersion,
+				"new_version":      currentVersion,
+				"error_message":    fmt.Sprintf("Upgrade failed: %v", err),
+				"ran_at":           time.Now().UTC(),
+			}); uploadErr != nil {
+				log.Printf("Failed to upload upgrade failure result: %v", uploadErr)
+			}
+			continue
+		}
+
+		log.Printf("✓ Upgrade successful: %s -> %s", currentVersion, updateCheck.LatestVersion)
+
+		// Upload success result
+		if err := client.UploadUpgradeResult(cfg.JWT, map[string]interface{}{
+			"request_id":       req.RequestID,
+			"device_id":        req.DeviceName,
+			"success":          true,
+			"previous_version": currentVersion,
+			"new_version":      updateCheck.LatestVersion,
+			"error_message":    "",
+			"ran_at":           time.Now().UTC(),
+		}); err != nil {
+			log.Printf("Failed to upload upgrade success result: %v", err)
+			// Don't fail the upgrade just because we couldn't upload the result
+		}
+
+		log.Printf("✓ Upgrade result uploaded successfully for request %s", req.RequestID)
+
+		// Restart daemon with new binary
+		log.Println("Restarting daemon with new version...")
+		execPath, err := os.Executable()
+		if err == nil {
+			if err := exec.Command(execPath, "daemon").Start(); err != nil {
+				log.Printf("Failed to restart daemon: %v", err)
+			}
+		}
+		os.Exit(0)
 	}
 
 	return nil

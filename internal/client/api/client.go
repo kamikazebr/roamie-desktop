@@ -597,3 +597,74 @@ func (c *Client) UploadDiagnosticsReport(jwt string, report interface{}) error {
 
 	return nil
 }
+
+// PendingUpgradeRequest represents a pending upgrade request
+type PendingUpgradeRequest struct {
+	RequestID     string `json:"request_id"`
+	DeviceID      string `json:"device_id"`
+	DeviceName    string `json:"device_name"`
+	TargetVersion string `json:"target_version,omitempty"`
+}
+
+// PendingUpgradesResponse represents the response from GET /api/devices/upgrades/pending
+type PendingUpgradesResponse struct {
+	PendingUpgrades []PendingUpgradeRequest `json:"pending_upgrades"`
+	Count           int                     `json:"count"`
+}
+
+// GetPendingUpgrades fetches all pending upgrade requests for the authenticated user's devices
+func (c *Client) GetPendingUpgrades(jwt string) (*PendingUpgradesResponse, error) {
+	req, err := http.NewRequest("GET", c.baseURL+"/api/devices/upgrades/pending", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwt)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("server returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var result PendingUpgradesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &result, nil
+}
+
+// UploadUpgradeResult uploads an upgrade result to the server
+func (c *Client) UploadUpgradeResult(jwt string, result interface{}) error {
+	body, err := json.Marshal(result)
+	if err != nil {
+		return fmt.Errorf("failed to marshal result: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.baseURL+"/api/devices/upgrades/result", bytes.NewBuffer(body))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("server returned %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
