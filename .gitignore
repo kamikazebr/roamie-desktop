@@ -68,3 +68,9 @@ crash_reports/
 /roamie
 /roamie-server
 .claude/settings.local.json
+
+# Gas Town (added by gt)
+.runtime/
+.claude/
+.beads/
+.logs/

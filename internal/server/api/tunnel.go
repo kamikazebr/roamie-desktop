@@ -13,6 +13,18 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var debugMode bool
+
+func init() {
+	debugMode = os.Getenv("ROAMIE_DEBUG") == "1" || os.Getenv("ROAMIE_DEBUG") == "true"
+}
+
+func debugLog(format string, v ...interface{}) {
+	if debugMode {
+		log.Printf("DEBUG: [API] "+format, v...)
+	}
+}
+
 // TunnelHandler handles SSH reverse tunnel related requests
 type TunnelHandler struct {
 	deviceRepo     *storage.DeviceRepository
@@ -70,6 +82,7 @@ func (h *TunnelHandler) Register(w http.ResponseWriter, r *http.Request) {
 
 	// Check if already has tunnel port allocated
 	if device.TunnelPort != nil {
+		debugLog("[REGISTER] Device already has tunnel port - device_id=%s port=%d", device.ID, *device.TunnelPort)
 		log.Printf("Device %s already has tunnel port %d", device.ID, *device.TunnelPort)
 
 		serverHost := os.Getenv("TUNNEL_SERVER_HOST")
@@ -97,20 +110,26 @@ func (h *TunnelHandler) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Allocate new port
+	debugLog("[REGISTER] Allocating new tunnel port - device_id=%s", device.ID)
 	port, err := h.tunnelPortPool.AllocatePort(r.Context())
 	if err != nil {
+		debugLog("[REGISTER] Port allocation failed - device_id=%s err=%v", device.ID, err)
 		log.Printf("Failed to allocate tunnel port for device %s: %v", device.ID, err)
 		respondErrorJSON(w, http.StatusInternalServerError, "no available tunnel ports")
 		return
 	}
+	debugLog("[REGISTER] Port allocated - device_id=%s port=%d", device.ID, port)
 
 	// Save to database
+	debugLog("[REGISTER] Saving port to database - device_id=%s port=%d", device.ID, port)
 	if err := h.deviceRepo.UpdateTunnelPort(r.Context(), device.ID, port); err != nil {
+		debugLog("[REGISTER] Failed to save port - device_id=%s port=%d err=%v", device.ID, port, err)
 		log.Printf("Failed to save tunnel port %d for device %s: %v", port, device.ID, err)
 		respondErrorJSON(w, http.StatusInternalServerError, "failed to register tunnel")
 		return
 	}
 
+	debugLog("[REGISTER] Port registration complete - device_id=%s port=%d user=%s", device.ID, port, claims.UserID)
 	log.Printf("Allocated tunnel port %d for device %s (user: %s)", port, device.ID, claims.UserID)
 
 	serverHost := os.Getenv("TUNNEL_SERVER_HOST")
@@ -222,24 +241,30 @@ func (h *TunnelHandler) RegisterKey(w http.ResponseWriter, r *http.Request) {
 	// Normalize the key: parse and re-marshal to remove comments and ensure consistent format
 	// This is important because ssh-keygen produces keys with comments like "root@hostname"
 	// but ssh.MarshalAuthorizedKey() produces keys without comments
+	debugLog("[KEY] Parsing SSH key - device_id=%s", device.ID)
 	parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(req.PublicKey))
 	if err != nil {
+		debugLog("[KEY] Failed to parse SSH key - device_id=%s err=%v", device.ID, err)
 		log.Printf("Failed to parse SSH key for device %s: %v", device.ID, err)
 		respondErrorJSON(w, http.StatusBadRequest, "invalid SSH public key format")
 		return
 	}
 	normalizedKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(parsedKey)))
+	keyFingerprint := ssh.FingerprintSHA256(parsedKey)
 
-	// Debug: log the key being stored
-	log.Printf("DEBUG: Storing SSH key for device %s (first 80 chars): %.80s...", device.ID, normalizedKey)
+	debugLog("[KEY] SSH key parsed and normalized - device_id=%s type=%s fingerprint=%s", device.ID, parsedKey.Type(), keyFingerprint)
+	debugLog("[KEY] Normalized key (first 80 chars): %.80s...", normalizedKey)
 
 	// Update SSH key
+	debugLog("[KEY] Updating SSH key in database - device_id=%s", device.ID)
 	if err := h.deviceRepo.UpdateTunnelSSHKey(r.Context(), device.ID, normalizedKey); err != nil {
+		debugLog("[KEY] Failed to update SSH key - device_id=%s err=%v", device.ID, err)
 		log.Printf("Failed to update SSH key for device %s: %v", device.ID, err)
 		respondErrorJSON(w, http.StatusInternalServerError, "failed to register SSH key")
 		return
 	}
 
+	debugLog("[KEY] SSH key registered successfully - device_id=%s user=%s fingerprint=%s", device.ID, claims.UserID, keyFingerprint)
 	log.Printf("Registered SSH key for device %s (user: %s)", device.ID, claims.UserID)
 
 	respondJSON(w, http.StatusOK, map[string]interface{}{

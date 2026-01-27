@@ -43,6 +43,47 @@ sudo roamie disconnect
 - Linux, macOS, or Windows
 - WireGuard installed
 
+## Troubleshooting
+
+### Debug Logging
+
+Enable detailed debug logs to troubleshoot connection issues:
+
+**Client Side:**
+```bash
+# Enable debug mode for tunnel commands
+ROAMIE_DEBUG=1 roamie tunnel connect
+
+# Or export for persistent session
+export ROAMIE_DEBUG=1
+roamie tunnel connect
+```
+
+**Server Side:**
+```bash
+# Edit systemd service
+sudo systemctl edit roamie-server
+
+# Add this line under [Service]:
+Environment="ROAMIE_DEBUG=1"
+
+# Restart service
+sudo systemctl restart roamie-server
+
+# View logs with debug output
+journalctl -u roamie-server -f | grep DEBUG
+```
+
+Debug logs include:
+- SSH key loading and generation
+- Connection attempts with retry delays
+- Authentication details with key fingerprints
+- Port forwarding setup
+- Data transfer byte counts
+- Keepalive status
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for common issues and log patterns.
+
 ## License
 
 MIT

@@ -21,6 +21,18 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var debugMode bool
+
+func init() {
+	debugMode = os.Getenv("ROAMIE_DEBUG") == "1" || os.Getenv("ROAMIE_DEBUG") == "true"
+}
+
+func debugLog(format string, v ...interface{}) {
+	if debugMode {
+		log.Printf("DEBUG: [SERVER] "+format, v...)
+	}
+}
+
 const (
 	TunnelPort       = 2222
 	ServerConfigPath = "/etc/roamie-server"
@@ -237,40 +249,50 @@ func (s *Server) loadOrGenerateHostKey() (ssh.Signer, error) {
 func (s *Server) authenticateClient(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 	// Get authorized key in SSH format and trim whitespace for comparison
 	authorizedKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(key)))
+	keyFingerprint := ssh.FingerprintSHA256(key)
 
-	// Debug: log what key we're looking for
-	log.Printf("DEBUG: Authenticating with key (first 80 chars): %.80s...", authorizedKey)
+	debugLog("[AUTH] Authentication attempt - user=%s remote=%s fingerprint=%s", conn.User(), conn.RemoteAddr(), keyFingerprint)
+	debugLog("[AUTH] Public key (first 80 chars): %.80s...", authorizedKey)
 
 	// Look up device by SSH public key
+	debugLog("[AUTH] Querying database for device with key")
 	device, err := s.deviceRepo.GetByTunnelSSHKey(s.ctx, authorizedKey)
 	if err != nil {
+		debugLog("[AUTH] Database query failed - err=%v", err)
 		log.Printf("Database error during authentication: %v", err)
 		return nil, fmt.Errorf("authentication failed")
 	}
 
 	if device == nil {
+		debugLog("[AUTH] Key not found in database - fingerprint=%s", keyFingerprint)
 		log.Printf("Rejected connection: SSH key not found in database (key: %.100s...)", authorizedKey)
 		return nil, fmt.Errorf("public key not authorized")
 	}
 
+	debugLog("[AUTH] Device found - device_id=%s active=%v tunnel_enabled=%v", device.ID, device.Active, device.TunnelEnabled)
+
 	// Check if device is active
 	if !device.Active {
+		debugLog("[AUTH] Device inactive - device_id=%s", device.ID)
 		log.Printf("Rejected connection: device %s is inactive", device.ID)
 		return nil, fmt.Errorf("device inactive")
 	}
 
 	// Check if tunnel is enabled for this device
 	if !device.TunnelEnabled {
+		debugLog("[AUTH] Tunnel disabled - device_id=%s", device.ID)
 		log.Printf("Rejected connection: tunnel disabled for device %s", device.ID)
 		return nil, fmt.Errorf("tunnel disabled for this device")
 	}
 
 	// Check if device has allocated tunnel port
 	if device.TunnelPort == nil {
+		debugLog("[AUTH] No tunnel port allocated - device_id=%s", device.ID)
 		log.Printf("Rejected connection: no tunnel port allocated for device %s", device.ID)
 		return nil, fmt.Errorf("no tunnel port allocated")
 	}
 
+	debugLog("[AUTH] Authentication successful - device_id=%s port=%d", device.ID, *device.TunnelPort)
 	log.Printf("✓ Authenticated device %s (port %d)", device.ID, *device.TunnelPort)
 
 	// Return permissions with device info
@@ -303,18 +325,23 @@ func (s *Server) Start() error {
 func (s *Server) acceptLoop() {
 	defer s.wg.Done()
 
+	debugLog("[ACCEPT] Accept loop started")
 	for {
+		debugLog("[ACCEPT] Waiting for connection")
 		conn, err := s.listener.Accept()
 		if err != nil {
 			select {
 			case <-s.ctx.Done():
+				debugLog("[ACCEPT] Context cancelled, stopping accept loop")
 				return // Server stopped
 			default:
+				debugLog("[ACCEPT] Accept failed - err=%v", err)
 				log.Printf("Failed to accept connection: %v", err)
 				continue
 			}
 		}
 
+		debugLog("[ACCEPT] Connection accepted - remote=%s", conn.RemoteAddr())
 		s.wg.Add(1)
 		go s.handleConnection(conn)
 	}
@@ -325,9 +352,14 @@ func (s *Server) handleConnection(conn net.Conn) {
 	defer s.wg.Done()
 	defer conn.Close()
 
+	remoteAddr := conn.RemoteAddr().String()
+	debugLog("[CONN] Handling connection - remote=%s", remoteAddr)
+
 	// SSH handshake
+	debugLog("[CONN] Starting SSH handshake - remote=%s", remoteAddr)
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, s.sshConfig)
 	if err != nil {
+		debugLog("[CONN] SSH handshake failed - remote=%s err=%v", remoteAddr, err)
 		log.Printf("SSH handshake failed: %v", err)
 		return
 	}
@@ -336,20 +368,24 @@ func (s *Server) handleConnection(conn net.Conn) {
 	deviceID := sshConn.Permissions.Extensions["device_id"]
 	tunnelPort := sshConn.Permissions.Extensions["tunnel_port"]
 
+	debugLog("[CONN] SSH handshake complete - device_id=%s port=%s remote=%s", deviceID, tunnelPort, remoteAddr)
 	log.Printf("SSH connection established for device %s (port %s)", deviceID, tunnelPort)
 
 	// Parse device ID from permissions
 	sourceDeviceID, err := uuid.Parse(deviceID)
 	if err != nil {
+		debugLog("[CONN] Invalid device ID - device_id=%s err=%v", deviceID, err)
 		log.Printf("Invalid device ID in permissions: %v", err)
 		return
 	}
 
 	// Handle global requests (port forwarding setup) and channels together
+	debugLog("[CONN] Starting tunnel session handler - device_id=%s", deviceID)
 	go s.handleTunnelSession(sshConn, reqs, chans, sourceDeviceID, deviceID, tunnelPort)
 
 	// Wait for connection to close
 	sshConn.Wait()
+	debugLog("[CONN] SSH connection closed - device_id=%s", deviceID)
 }
 
 // handleTunnelSession manages the tunnel session including port forwarding and authorization
@@ -370,17 +406,20 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 	}()
 
 	// Handle global requests (tcpip-forward)
-	log.Printf("DEBUG: Waiting for global requests from device %s...", deviceIDStr)
+	debugLog("[SESSION] Waiting for global requests - device_id=%s", deviceIDStr)
 	for req := range reqs {
-		log.Printf("DEBUG: Received global request type=%s wantReply=%v from device %s", req.Type, req.WantReply, deviceIDStr)
+		debugLog("[SESSION] Received request - type=%s want_reply=%v device_id=%s", req.Type, req.WantReply, deviceIDStr)
 		switch req.Type {
 		case "tcpip-forward":
+			debugLog("[SESSION] Processing tcpip-forward request - device_id=%s", deviceIDStr)
+
 			// Parse the forward request
 			var forwardRequest struct {
 				BindAddr string
 				BindPort uint32
 			}
 			if err := ssh.Unmarshal(req.Payload, &forwardRequest); err != nil {
+				debugLog("[SESSION] Failed to parse forward request - device_id=%s err=%v", deviceIDStr, err)
 				log.Printf("Failed to parse tcpip-forward request: %v", err)
 				if req.WantReply {
 					req.Reply(false, nil)
@@ -388,10 +427,13 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 				continue
 			}
 
+			debugLog("[SESSION] Forward request parsed - device_id=%s bind_addr=%s bind_port=%d", deviceIDStr, forwardRequest.BindAddr, forwardRequest.BindPort)
+
 			// Validate that the requested port matches the allocated port
 			allocatedPort := tunnelPortStr
 			requestedPort := int(forwardRequest.BindPort)
 			if fmt.Sprintf("%d", requestedPort) != allocatedPort {
+				debugLog("[SESSION] Port mismatch - device_id=%s requested=%d allocated=%s", deviceIDStr, requestedPort, allocatedPort)
 				log.Printf("⚠️  Device %s requested port %d but allocated port is %s",
 					deviceIDStr, requestedPort, allocatedPort)
 				if req.WantReply {
@@ -402,8 +444,10 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 
 			// Start listening on the allocated port
 			listenAddr := fmt.Sprintf("0.0.0.0:%d", requestedPort)
+			debugLog("[SESSION] Creating listener - device_id=%s addr=%s", deviceIDStr, listenAddr)
 			listener, err := net.Listen("tcp", listenAddr)
 			if err != nil {
+				debugLog("[SESSION] Listener creation failed - device_id=%s addr=%s err=%v", deviceIDStr, listenAddr, err)
 				log.Printf("Failed to listen on %s: %v", listenAddr, err)
 				if req.WantReply {
 					req.Reply(false, nil)
@@ -412,6 +456,7 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 			}
 
 			tunnelListener = listener
+			debugLog("[SESSION] Listener created successfully - device_id=%s addr=%s", deviceIDStr, listenAddr)
 			log.Printf("✓ Reverse tunnel established: Device %s listening on %s", deviceIDStr, listenAddr)
 
 			// Reply success
@@ -422,10 +467,12 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 				}{
 					Port: uint32(requestedPort),
 				}
+				debugLog("[SESSION] Sending success reply - device_id=%s port=%d", deviceIDStr, requestedPort)
 				req.Reply(true, ssh.Marshal(&reply))
 			}
 
 			// Handle incoming connections on this port
+			debugLog("[SESSION] Starting tunnel connection handler - device_id=%s port=%d", deviceIDStr, requestedPort)
 			go s.handleTunnelConnections(listener, sshConn, deviceID, requestedPort)
 
 		case "cancel-tcpip-forward":
@@ -455,20 +502,26 @@ func (s *Server) handleTunnelSession(sshConn *ssh.ServerConn, reqs <-chan *ssh.R
 
 // handleTunnelConnections handles incoming TCP connections on a tunnel port
 func (s *Server) handleTunnelConnections(listener net.Listener, sshConn *ssh.ServerConn, targetDeviceID uuid.UUID, tunnelPort int) {
+	debugLog("[TUNNEL] Tunnel connection handler started - device_id=%s port=%d", targetDeviceID, tunnelPort)
 	for {
 		// Accept incoming TCP connection
+		debugLog("[TUNNEL] Waiting for tunnel connection - device_id=%s port=%d", targetDeviceID, tunnelPort)
 		tcpConn, err := listener.Accept()
 		if err != nil {
 			select {
 			case <-s.ctx.Done():
+				debugLog("[TUNNEL] Context cancelled - device_id=%s port=%d", targetDeviceID, tunnelPort)
 				return // Server stopping
 			default:
 				if !isClosedError(err) {
+					debugLog("[TUNNEL] Accept failed - device_id=%s port=%d err=%v", targetDeviceID, tunnelPort, err)
 					log.Printf("Failed to accept tunnel connection on port %d: %v", tunnelPort, err)
 				}
 				return
 			}
 		}
+
+		debugLog("[TUNNEL] Tunnel connection accepted - device_id=%s port=%d remote=%s", targetDeviceID, tunnelPort, tcpConn.RemoteAddr())
 
 		// Handle this connection in a goroutine
 		go s.forwardTunnelConnection(tcpConn, sshConn, targetDeviceID, tunnelPort)
@@ -481,11 +534,13 @@ func (s *Server) forwardTunnelConnection(tcpConn net.Conn, sshConn *ssh.ServerCo
 
 	// Get remote address for logging
 	remoteAddr := tcpConn.RemoteAddr().String()
+	debugLog("[CHANNEL] Starting tunnel connection forward - device_id=%s port=%d remote=%s", targetDeviceID, tunnelPort, remoteAddr)
 	log.Printf("Incoming connection to tunnel port %d from %s", tunnelPort, remoteAddr)
 
 	// Parse originator address and port
 	originHost, originPortStr, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
+		debugLog("[CHANNEL] Failed to parse remote address - remote=%s err=%v", remoteAddr, err)
 		log.Printf("Failed to parse remote address %s: %v", remoteAddr, err)
 		originHost = remoteAddr
 		originPortStr = "0"
@@ -494,6 +549,7 @@ func (s *Server) forwardTunnelConnection(tcpConn net.Conn, sshConn *ssh.ServerCo
 	if p, err := fmt.Sscanf(originPortStr, "%d", &originPort); err != nil || p != 1 {
 		originPort = 0
 	}
+	debugLog("[CHANNEL] Origin parsed - host=%s port=%d", originHost, originPort)
 
 	// For now, we allow all connections to the tunnel port and rely on
 	// the final SSH authentication at the target device.
@@ -517,15 +573,16 @@ func (s *Server) forwardTunnelConnection(tcpConn net.Conn, sshConn *ssh.ServerCo
 		OriginatorPort:    originPort,
 	}
 
-	log.Printf("DEBUG: Opening forwarded-tcpip channel to device %s (dest: %s:%d, origin: %s)",
-		targetDeviceID, payload.Address, payload.Port, payload.OriginatorAddress)
+	debugLog("[CHANNEL] Opening forwarded-tcpip channel - device_id=%s dest=%s:%d origin=%s:%d",
+		targetDeviceID, payload.Address, payload.Port, payload.OriginatorAddress, payload.OriginatorPort)
 	channel, requests, err := sshConn.OpenChannel("forwarded-tcpip", ssh.Marshal(&payload))
 	if err != nil {
+		debugLog("[CHANNEL] Failed to open channel - device_id=%s err=%v", targetDeviceID, err)
 		log.Printf("Failed to open forwarded channel to device %s: %v", targetDeviceID, err)
 		return
 	}
 	defer channel.Close()
-	log.Printf("DEBUG: Channel opened successfully to device %s", targetDeviceID)
+	debugLog("[CHANNEL] Channel opened successfully - device_id=%s", targetDeviceID)
 
 	// Discard channel requests
 	go ssh.DiscardRequests(requests)
@@ -534,21 +591,30 @@ func (s *Server) forwardTunnelConnection(tcpConn net.Conn, sshConn *ssh.ServerCo
 		remoteAddr, targetDeviceID, tunnelPort)
 
 	// Bidirectional forwarding between TCP connection and SSH channel
+	debugLog("[CHANNEL] Starting bidirectional copy - device_id=%s", targetDeviceID)
 	done := make(chan struct{}, 2)
 
+	var toChannelBytes, toTCPBytes int64
+
 	go func() {
-		io.Copy(channel, tcpConn)
+		n, _ := io.Copy(channel, tcpConn)
+		toChannelBytes = n
+		debugLog("[CHANNEL] TCP→Channel copy complete - device_id=%s bytes=%d", targetDeviceID, n)
 		done <- struct{}{}
 	}()
 
 	go func() {
-		io.Copy(tcpConn, channel)
+		n, _ := io.Copy(tcpConn, channel)
+		toTCPBytes = n
+		debugLog("[CHANNEL] Channel→TCP copy complete - device_id=%s bytes=%d", targetDeviceID, n)
 		done <- struct{}{}
 	}()
 
 	// Wait for either direction to complete
 	<-done
 
+	debugLog("[CHANNEL] Connection closed - device_id=%s remote=%s bytes_to_channel=%d bytes_to_tcp=%d",
+		targetDeviceID, remoteAddr, toChannelBytes, toTCPBytes)
 	log.Printf("Tunnel connection closed: %s → Device %s (port %d)",
 		remoteAddr, targetDeviceID, tunnelPort)
 }
