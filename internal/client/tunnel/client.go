@@ -23,6 +23,18 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
+var debugMode bool
+
+func init() {
+	debugMode = os.Getenv("ROAMIE_DEBUG") == "1" || os.Getenv("ROAMIE_DEBUG") == "true"
+}
+
+func debugLog(format string, v ...interface{}) {
+	if debugMode {
+		log.Printf("DEBUG: [CLIENT] "+format, v...)
+	}
+}
+
 const (
 	TunnelKeyFile         = "tunnel_key"
 	TunnelServerPort      = 2222
@@ -95,27 +107,38 @@ func NewClientWithContext(ctx context.Context, cfg *config.Config) (*Client, err
 func (c *Client) loadOrGenerateKey() (ssh.Signer, error) {
 	configDir, err := config.GetConfigDir()
 	if err != nil {
+		debugLog("[KEY] Failed to get config directory - err=%v", err)
 		return nil, err
 	}
 
 	keyPath := filepath.Join(configDir, TunnelKeyFile)
+	debugLog("[KEY] Key path resolved - path=%s", keyPath)
 
 	// Try to load existing key
+	debugLog("[KEY] Attempting to read existing key file")
 	if data, err := os.ReadFile(keyPath); err == nil {
+		debugLog("[KEY] Key file read successfully - size=%d bytes", len(data))
 		signer, err := ssh.ParsePrivateKey(data)
 		if err == nil {
+			debugLog("[KEY] Existing key parsed successfully - type=%s", signer.PublicKey().Type())
 			log.Printf("✓ Loaded existing SSH tunnel key from: %s", keyPath)
 			return signer, nil
 		}
+		debugLog("[KEY] Failed to parse existing key - err=%v", err)
 		log.Printf("Warning: failed to parse existing tunnel key: %v", err)
+	} else {
+		debugLog("[KEY] No existing key file found - err=%v", err)
 	}
 
 	// Generate new key
+	debugLog("[KEY] Starting new key generation - bits=2048")
 	log.Println("Generating new SSH tunnel key...")
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
+		debugLog("[KEY] Key generation failed - err=%v", err)
 		return nil, fmt.Errorf("failed to generate key: %w", err)
 	}
+	debugLog("[KEY] RSA key pair generated successfully")
 
 	// Encode private key to PEM format
 	privateKeyPEM := &pem.Block{
@@ -123,21 +146,28 @@ func (c *Client) loadOrGenerateKey() (ssh.Signer, error) {
 		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
 	}
 	privateKeyBytes := pem.EncodeToMemory(privateKeyPEM)
+	debugLog("[KEY] Key encoded to PEM format - size=%d bytes", len(privateKeyBytes))
 
 	// Save to disk
+	debugLog("[KEY] Writing key to disk - path=%s", keyPath)
 	if err := os.WriteFile(keyPath, privateKeyBytes, 0600); err != nil {
+		debugLog("[KEY] Failed to write key file - err=%v", err)
 		return nil, fmt.Errorf("failed to save tunnel key: %w", err)
 	}
+	debugLog("[KEY] Key file written successfully")
 
 	// Fix ownership if running under sudo
 	utils.FixFileOwnership(keyPath)
+	debugLog("[KEY] File ownership fixed")
 
 	// Parse to ssh.Signer
 	signer, err := ssh.ParsePrivateKey(privateKeyBytes)
 	if err != nil {
+		debugLog("[KEY] Failed to parse generated key - err=%v", err)
 		return nil, fmt.Errorf("failed to parse generated key: %w", err)
 	}
 
+	debugLog("[KEY] Generated key parsed successfully - type=%s", signer.PublicKey().Type())
 	log.Printf("✓ Generated and saved new SSH tunnel key to: %s", keyPath)
 	return signer, nil
 }
@@ -163,47 +193,61 @@ func (c *Client) RegisterKey() error {
 
 // Connect establishes the SSH tunnel with auto-reconnect
 func (c *Client) Connect() error {
+	debugLog("[CONNECT] Starting tunnel connection - server=%s device_id=%s", c.serverURL, c.deviceID)
+
 	// Get tunnel port from server
+	debugLog("[CONNECT] Fetching tunnel status from server")
 	client := api.NewClient(c.serverURL)
 	status, err := client.GetTunnelStatus(c.jwt)
 	if err != nil {
+		debugLog("[CONNECT] Failed to get tunnel status - err=%v", err)
 		return fmt.Errorf("failed to get tunnel status: %w", err)
 	}
+	debugLog("[CONNECT] Tunnel status received - tunnel_count=%d", len(status.Tunnels))
 
 	// Sync tunnel authorized keys before connecting
 	// This ensures other devices in the same account can access this device through the tunnel
 	log.Println("→ Syncing tunnel authorized keys...")
+	debugLog("[CONNECT] Starting tunnel key sync")
 	sshManager, err := sshpkg.NewManager(c.serverURL)
 	if err != nil {
+		debugLog("[CONNECT] Failed to create SSH manager - err=%v", err)
 		log.Printf("Warning: failed to create SSH manager: %v", err)
 	} else {
 		result, err := sshManager.SyncTunnelKeys(c.jwt)
 		if err != nil {
+			debugLog("[CONNECT] Tunnel key sync failed - err=%v", err)
 			log.Printf("Warning: failed to sync tunnel keys: %v", err)
 		} else {
+			debugLog("[CONNECT] Tunnel key sync completed - total=%d", result.Total)
 			log.Printf("✓ Synced %d tunnel authorized key(s)", result.Total)
 		}
 	}
 
 	if len(status.Tunnels) == 0 {
+		debugLog("[CONNECT] No tunnels allocated")
 		return fmt.Errorf("no tunnel port allocated, run 'roamie tunnel register' first")
 	}
 
 	// Find our device
+	debugLog("[CONNECT] Searching for device tunnel port - device_id=%s", c.deviceID)
 	var tunnelPort int
 	for _, t := range status.Tunnels {
 		if t.DeviceID == c.deviceID {
 			tunnelPort = t.Port
+			debugLog("[CONNECT] Found tunnel port for device - port=%d", tunnelPort)
 			break
 		}
 	}
 
 	if tunnelPort == 0 {
+		debugLog("[CONNECT] Device not found in tunnel list")
 		return fmt.Errorf("tunnel port not found for this device")
 	}
 
 	c.tunnelPort = tunnelPort
 	log.Printf("Tunnel port allocated: %d", tunnelPort)
+	debugLog("[CONNECT] Starting connection loop")
 
 	// Start connection loop
 	c.wg.Add(1)
@@ -216,29 +260,37 @@ func (c *Client) Connect() error {
 func (c *Client) connectionLoop() {
 	defer c.wg.Done()
 
+	debugLog("[RETRY] Connection loop started")
 	for {
 		select {
 		case <-c.ctx.Done():
+			debugLog("[RETRY] Context cancelled, stopping connection loop")
 			log.Println("Tunnel connection loop stopped")
 			return
 		default:
 		}
 
+		debugLog("[RETRY] Attempting connection - delay=%s", c.reconnectDelay)
 		if err := c.establishConnection(); err != nil {
+			debugLog("[RETRY] Connection failed - err=%v", err)
 			log.Printf("Connection failed: %v", err)
 			c.setConnected(false)
 
 			// Exponential backoff
+			debugLog("[RETRY] Scheduling reconnect - delay=%s", c.reconnectDelay)
 			log.Printf("Reconnecting in %s...", c.reconnectDelay)
 			time.Sleep(c.reconnectDelay)
 
 			// Increase delay for next attempt (max 30s)
+			prevDelay := c.reconnectDelay
 			c.reconnectDelay *= 2
 			if c.reconnectDelay > MaxReconnectDelay {
 				c.reconnectDelay = MaxReconnectDelay
 			}
+			debugLog("[RETRY] Backoff adjusted - prev=%s next=%s", prevDelay, c.reconnectDelay)
 		} else {
 			// Reset delay on successful connection
+			debugLog("[RETRY] Connection successful, resetting backoff")
 			c.reconnectDelay = InitialReconnectDelay
 		}
 	}
@@ -246,6 +298,8 @@ func (c *Client) connectionLoop() {
 
 // establishConnection creates a single SSH connection attempt
 func (c *Client) establishConnection() error {
+	debugLog("[SSH] Starting SSH connection establishment")
+
 	// SSH client configuration
 	sshConfig := &ssh.ClientConfig{
 		User: "tunnel",
@@ -255,19 +309,20 @@ func (c *Client) establishConnection() error {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO: Implement proper host key verification
 		Timeout:         10 * time.Second,
 	}
+	debugLog("[SSH] SSH config created - user=tunnel timeout=10s")
 
 	// Connect to SSH server
 	addr := fmt.Sprintf("%s:%d", c.serverHost, TunnelServerPort)
 	log.Printf("Connecting to SSH tunnel server: %s", addr)
+	debugLog("[SSH] Starting SSH dial - addr=%s device_id=%s", addr, c.deviceID)
 
-	log.Printf("DEBUG: About to dial SSH...")
 	sshClient, err := ssh.Dial("tcp", addr, sshConfig)
 	if err != nil {
-		log.Printf("DEBUG: SSH dial failed: %v", err)
+		debugLog("[SSH] SSH dial failed - addr=%s err=%v", addr, err)
 		return fmt.Errorf("SSH dial failed: %w", err)
 	}
 	defer sshClient.Close()
-	log.Printf("DEBUG: SSH dial succeeded")
+	debugLog("[SSH] SSH dial succeeded - remote=%s", sshClient.RemoteAddr())
 
 	c.mu.Lock()
 	c.sshClient = sshClient
@@ -277,33 +332,39 @@ func (c *Client) establishConnection() error {
 	log.Printf("✓ SSH tunnel connected")
 
 	// Setup reverse port forward
-	log.Printf("DEBUG: About to setup reverse port forward on port %d...", c.tunnelPort)
+	debugLog("[FORWARD] Setting up reverse port forward - port=%d", c.tunnelPort)
 	listener, err := sshClient.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", c.tunnelPort))
 	if err != nil {
-		log.Printf("DEBUG: Listen failed: %v", err)
+		debugLog("[FORWARD] Listener setup failed - port=%d err=%v", c.tunnelPort, err)
 		return fmt.Errorf("failed to setup reverse tunnel: %w", err)
 	}
 	defer listener.Close()
-	log.Printf("DEBUG: Listener created successfully")
+	debugLog("[FORWARD] Listener created successfully - addr=%s", listener.Addr())
 
 	log.Printf("✓ Reverse tunnel established: server port %d → localhost:%d", c.tunnelPort, LocalSSHPort)
 
 	// Start keepalive
+	debugLog("[KEEPALIVE] Starting keepalive goroutine")
 	c.wg.Add(1)
 	go c.keepalive(sshClient)
 
 	// Accept connections and forward to local SSH
+	debugLog("[FORWARD] Entering accept loop")
 	for {
 		select {
 		case <-c.ctx.Done():
+			debugLog("[FORWARD] Context cancelled, exiting accept loop")
 			return nil
 		default:
 		}
 
+		debugLog("[FORWARD] Waiting for incoming connection")
 		conn, err := listener.Accept()
 		if err != nil {
+			debugLog("[FORWARD] Accept failed - err=%v", err)
 			return fmt.Errorf("listener accept failed: %w", err)
 		}
+		debugLog("[FORWARD] Accepted connection - remote=%s", conn.RemoteAddr())
 
 		c.wg.Add(1)
 		go c.handleForward(conn)
@@ -314,20 +375,25 @@ func (c *Client) establishConnection() error {
 func (c *Client) keepalive(client *ssh.Client) {
 	defer c.wg.Done()
 
+	debugLog("[KEEPALIVE] Keepalive routine started - interval=%s", KeepaliveInterval)
 	ticker := time.NewTicker(KeepaliveInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
 		case <-c.ctx.Done():
+			debugLog("[KEEPALIVE] Context cancelled, stopping keepalive")
 			return
 		case <-ticker.C:
+			debugLog("[KEEPALIVE] Sending keepalive request")
 			_, _, err := client.SendRequest("keepalive@roamie", true, nil)
 			if err != nil {
+				debugLog("[KEEPALIVE] Keepalive failed - err=%v", err)
 				log.Printf("Keepalive failed: %v", err)
 				client.Close()
 				return
 			}
+			debugLog("[KEEPALIVE] Keepalive successful")
 		}
 	}
 }
@@ -337,29 +403,44 @@ func (c *Client) handleForward(remoteConn net.Conn) {
 	defer c.wg.Done()
 	defer remoteConn.Close()
 
+	remoteAddr := remoteConn.RemoteAddr().String()
+	debugLog("[FORWARD] Handling forward connection - remote=%s", remoteAddr)
+
 	// Connect to local SSH server
-	localConn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", LocalSSHPort), 10*time.Second)
+	localAddr := fmt.Sprintf("localhost:%d", LocalSSHPort)
+	debugLog("[FORWARD] Connecting to local SSH - addr=%s", localAddr)
+	localConn, err := net.DialTimeout("tcp", localAddr, 10*time.Second)
 	if err != nil {
+		debugLog("[FORWARD] Local SSH connection failed - addr=%s err=%v", localAddr, err)
 		log.Printf("Failed to connect to local SSH: %v", err)
 		return
 	}
 	defer localConn.Close()
+	debugLog("[FORWARD] Connected to local SSH - local=%s remote=%s", localConn.LocalAddr(), localConn.RemoteAddr())
 
 	// Bidirectional copy
+	debugLog("[FORWARD] Starting bidirectional copy")
 	var wg sync.WaitGroup
 	wg.Add(2)
 
+	var toLocalBytes, toRemoteBytes int64
+
 	go func() {
 		defer wg.Done()
-		io.Copy(localConn, remoteConn)
+		n, _ := io.Copy(localConn, remoteConn)
+		toLocalBytes = n
+		debugLog("[FORWARD] Remote→Local copy complete - bytes=%d", n)
 	}()
 
 	go func() {
 		defer wg.Done()
-		io.Copy(remoteConn, localConn)
+		n, _ := io.Copy(remoteConn, localConn)
+		toRemoteBytes = n
+		debugLog("[FORWARD] Local→Remote copy complete - bytes=%d", n)
 	}()
 
 	wg.Wait()
+	debugLog("[FORWARD] Connection closed - remote=%s bytes_to_local=%d bytes_to_remote=%d", remoteAddr, toLocalBytes, toRemoteBytes)
 }
 
 // Disconnect stops the SSH tunnel
