@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.0.12] - 2026-02-27
+
+### Features
+
+- **Resilient Terminal (v2)**: New `roamie terminal` command for MOSH-style resilient terminal sessions over WebSocket
+  - `roamie terminal start [address]` — starts WebSocket server (default `localhost:8822`)
+  - `roamie terminal list` — lists active terminal sessions
+  - Survives network interruptions, IP changes, sleep/wake cycles
+  - E2E encryption with ChaCha20-Poly1305 between mobile app and CLI client
+  - PTY management with VT100 state tracking for differential updates
+
+- **Doctor: Authenticated API check**: `roamie doctor` now tests a real authenticated API call, not just `/health`
+  - Detects server-side failures (500 errors, schema mismatches, broken DB queries) that `/health` would miss
+  - Reports the exact error message with fix suggestion to check server logs
+
+- **Doctor: Tunnel port connectivity check**: Verifies the tunnel port is actually reachable on the server
+  - Catches firewall blocks, process not running on server, and port conflicts
+  - Suggests `roamie tunnel register` if port is unreachable
+
+- **Doctor: Tunnel process check**: Verifies the local SSH tunnel process (autossh/ssh) is actively running
+  - Distinguishes between "tunnel configured" vs "tunnel actually connected"
+  - Suggests `roamie tunnel start` if process is missing
+
+### Bug Fixes
+
+- **Upgrade: Skip Firestore upload when already on latest version**: Daemon no longer spams Firestore with "already up to date" results on every check cycle — only uploads results when an upgrade attempt was actually made (success or failure)
+
+- **SSH authorized_keys: Fix blank line accumulation**: Fixed bug where repeated sync operations would accumulate extra blank lines in `~/.ssh/authorized_keys` before the Roamie-managed section
+
+### Internal
+
+- **Firestore: User-centric hierarchy**: Reorganized Firestore collections from device-centric to user-centric structure, reducing read costs and simplifying queries
+  - `diagnostics_requests/{device}/pending/{id}` → `users/{user}/diagnostics_requests/{id}`
+  - `upgrade_requests/{device}/pending/{id}` → `users/{user}/upgrade_requests/{id}`
+
 ## [server-v0.0.11 / v0.0.11] - 2026-01-17
 
 ### Features

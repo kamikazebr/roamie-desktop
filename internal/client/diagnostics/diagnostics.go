@@ -2,9 +2,11 @@ package diagnostics
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/kamikazebr/roamie-desktop/internal/client/api"
@@ -294,6 +296,117 @@ func checkTunnelStatus(cfg *config.Config) CheckResult {
 	}
 }
 
+// checkAPIAuthenticated validates that authenticated API calls work (catches server errors like 500)
+func checkAPIAuthenticated(cfg *config.Config) CheckResult {
+	if cfg == nil || cfg.JWT == "" {
+		return CheckResult{
+			Name:     "API authenticated",
+			Category: "Authentication",
+			Status:   CheckWarning,
+			Message:  "No JWT token, skipping",
+		}
+	}
+
+	client := api.NewClient(cfg.ServerURL)
+	_, err := client.ValidateDevice(cfg.DeviceID, cfg.JWT)
+	if err != nil {
+		return CheckResult{
+			Name:     "API authenticated",
+			Category: "Authentication",
+			Status:   CheckError,
+			Message:  fmt.Sprintf("API error: %v", err),
+			Fixes:    []string{"Check server logs: journalctl -u roamie -n 50"},
+		}
+	}
+
+	return CheckResult{
+		Name:     "API authenticated",
+		Category: "Authentication",
+		Status:   CheckPassed,
+		Message:  "Authenticated API call successful",
+	}
+}
+
+// checkTunnelPortOpen checks if the tunnel port is actually reachable on the server
+func checkTunnelPortOpen(cfg *config.Config) CheckResult {
+	if cfg == nil || !cfg.TunnelEnabled || cfg.TunnelPort == 0 {
+		return CheckResult{
+			Name:     "Tunnel port",
+			Category: "Services",
+			Status:   CheckInfo,
+			Message:  "Tunnel not configured",
+		}
+	}
+
+	// Extract host from ServerURL (e.g. "http://host:8081" -> "host")
+	serverHost := cfg.ServerURL
+	serverHost = strings.TrimPrefix(serverHost, "http://")
+	serverHost = strings.TrimPrefix(serverHost, "https://")
+	if idx := strings.LastIndex(serverHost, ":"); idx != -1 {
+		serverHost = serverHost[:idx]
+	}
+
+	addr := fmt.Sprintf("%s:%d", serverHost, cfg.TunnelPort)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		return CheckResult{
+			Name:     "Tunnel port",
+			Category: "Services",
+			Status:   CheckError,
+			Message:  fmt.Sprintf("Port %d unreachable on server: %v", cfg.TunnelPort, err),
+			Fixes:    []string{"Run: roamie tunnel register", "Check server firewall rules"},
+		}
+	}
+	conn.Close()
+
+	return CheckResult{
+		Name:     "Tunnel port",
+		Category: "Services",
+		Status:   CheckPassed,
+		Message:  fmt.Sprintf("Port %d open on server", cfg.TunnelPort),
+	}
+}
+
+// checkTunnelProcessRunning checks if the local SSH tunnel process is active
+func checkTunnelProcessRunning(cfg *config.Config) CheckResult {
+	if cfg == nil || !cfg.TunnelEnabled {
+		return CheckResult{
+			Name:     "Tunnel process",
+			Category: "Services",
+			Status:   CheckInfo,
+			Message:  "Tunnel disabled",
+		}
+	}
+
+	cmd := exec.Command("pgrep", "-f", "autossh.*roamie")
+	if err := cmd.Run(); err == nil {
+		return CheckResult{
+			Name:     "Tunnel process",
+			Category: "Services",
+			Status:   CheckPassed,
+			Message:  "Tunnel process running (autossh)",
+		}
+	}
+
+	cmd = exec.Command("pgrep", "-f", fmt.Sprintf("ssh.*%d", cfg.TunnelPort))
+	if err := cmd.Run(); err == nil {
+		return CheckResult{
+			Name:     "Tunnel process",
+			Category: "Services",
+			Status:   CheckPassed,
+			Message:  "Tunnel process running (ssh)",
+		}
+	}
+
+	return CheckResult{
+		Name:     "Tunnel process",
+		Category: "Services",
+		Status:   CheckWarning,
+		Message:  "Tunnel process not found",
+		Fixes:    []string{"Wait 10s for daemon to start it, or run: roamie tunnel start"},
+	}
+}
+
 // checkAutoUpgrade validates auto-upgrade status
 func checkAutoUpgrade(cfg *config.Config) CheckResult {
 	if cfg == nil {
@@ -362,6 +475,7 @@ func GetDoctorChecks() []CheckCategory {
 				checkConfigLoaded,
 				checkJWTValidity,
 				checkServerReachable,
+				checkAPIAuthenticated,
 			},
 		},
 		{
@@ -376,6 +490,8 @@ func GetDoctorChecks() []CheckCategory {
 			Checks: []func(*config.Config) CheckResult{
 				checkDaemonRunning,
 				checkTunnelStatus,
+				checkTunnelPortOpen,
+				checkTunnelProcessRunning,
 				checkAutoUpgrade,
 			},
 		},

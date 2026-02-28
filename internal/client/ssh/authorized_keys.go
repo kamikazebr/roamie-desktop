@@ -123,6 +123,9 @@ func (m *AuthorizedKeysManager) WriteKeys(roamieKeys []string, otherKeys []strin
 	// Build file content
 	var lines []string
 
+	// Avoid accumulating extra blank lines before the Roamie section.
+	otherKeys = normalizeOtherKeys(otherKeys)
+
 	// Add other keys first (preserve user's manual entries)
 	lines = append(lines, otherKeys...)
 
@@ -161,6 +164,34 @@ func (m *AuthorizedKeysManager) WriteKeys(roamieKeys []string, otherKeys []strin
 	}
 
 	return nil
+}
+
+func normalizeOtherKeys(lines []string) []string {
+	var normalized []string
+	seenContent := false
+	prevBlank := false
+
+	for _, line := range lines {
+		isBlank := strings.TrimSpace(line) == ""
+		if isBlank {
+			if !seenContent || prevBlank {
+				continue
+			}
+			normalized = append(normalized, "")
+			prevBlank = true
+			continue
+		}
+
+		normalized = append(normalized, line)
+		seenContent = true
+		prevBlank = false
+	}
+
+	if len(normalized) > 0 && strings.TrimSpace(normalized[len(normalized)-1]) == "" {
+		normalized = normalized[:len(normalized)-1]
+	}
+
+	return normalized
 }
 
 // UpdateRoamieKeys updates only the Roamie section, preserving other keys

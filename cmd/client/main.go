@@ -15,6 +15,7 @@ import (
 	"github.com/kamikazebr/roamie-desktop/internal/client/daemon"
 	"github.com/kamikazebr/roamie-desktop/internal/client/ssh"
 	"github.com/kamikazebr/roamie-desktop/internal/client/sshd"
+	"github.com/kamikazebr/roamie-desktop/internal/client/terminal"
 	"github.com/kamikazebr/roamie-desktop/internal/client/tunnel"
 	"github.com/kamikazebr/roamie-desktop/internal/client/upgrade"
 	"github.com/kamikazebr/roamie-desktop/internal/client/wireguard"
@@ -325,6 +326,29 @@ var vpnStatusCmd = &cobra.Command{
 	Run:   runVPNStatus,
 }
 
+var terminalCmd = &cobra.Command{
+	Use:   "terminal",
+	Short: "Manage resilient terminal sessions (v2)",
+}
+
+var terminalStartCmd = &cobra.Command{
+	Use:   "start [address]",
+	Short: "Start terminal WebSocket server",
+	Long: `Start the resilient terminal WebSocket server.
+
+Default address: localhost:8822
+Example: roamie terminal start
+         roamie terminal start :9000`,
+	Args: cobra.MaximumNArgs(1),
+	Run:  runTerminalStart,
+}
+
+var terminalListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List active terminal sessions",
+	Run:   runTerminalList,
+}
+
 func init() {
 	setupDaemonCmd.Flags().BoolVarP(&setupDaemonYes, "yes", "y", false, "Skip confirmation prompt")
 	upgradeCmd.Flags().BoolVarP(&upgradeForce, "force", "f", false, "Force upgrade even if already on latest version")
@@ -334,7 +358,8 @@ func init() {
 	sshCmd.AddCommand(sshSyncCmd, sshStatusCmd, sshEnableCmd, sshDisableCmd, sshSetIntervalCmd)
 	tunnelCmd.AddCommand(tunnelStartCmd, tunnelStopCmd, tunnelStatusCmd, tunnelRegisterCmd, tunnelDisableCmd, tunnelEnableCmd)
 	vpnCmd.AddCommand(vpnInstallCmd, vpnStatusCmd)
-	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, vpnCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd, autoUpgradeCmd, doctorCmd)
+	terminalCmd.AddCommand(terminalStartCmd, terminalListCmd)
+	rootCmd.AddCommand(authCmd, sshCmd, tunnelCmd, vpnCmd, terminalCmd, setupDaemonCmd, uninstallDaemonCmd, versionCmd, connectCmd, disconnectCmd, upgradeCmd, autoUpgradeCmd, doctorCmd)
 }
 
 func main() {
@@ -1353,4 +1378,35 @@ func runDoctor(cmd *cobra.Command, args []string) {
 	if summary.Errors > 0 {
 		os.Exit(1)
 	}
+}
+
+// Terminal command implementations
+
+func runTerminalStart(cmd *cobra.Command, args []string) {
+	// Default address
+	addr := "localhost:8822"
+	if len(args) > 0 {
+		addr = args[0]
+		// Add default host if only port specified
+		if strings.HasPrefix(addr, ":") {
+			addr = "localhost" + addr
+		}
+	}
+
+	fmt.Printf("Starting terminal WebSocket server on %s...\n", addr)
+
+	server := terminal.NewServer(addr)
+	if err := server.Start(); err != nil {
+		fmt.Printf("Error: Failed to start server: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func runTerminalList(cmd *cobra.Command, args []string) {
+	// For now, we need to make an HTTP request to the server
+	// In the future, this could be enhanced to communicate with a running server
+	fmt.Println("Listing active terminal sessions...")
+	fmt.Println("\nNote: This command requires a running terminal server.")
+	fmt.Println("Start the server with: roamie terminal start")
+	fmt.Println("\nTo list sessions, visit: http://localhost:8822/sessions")
 }
